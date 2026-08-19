@@ -105,6 +105,27 @@ describe('dsh-tool-subagent', () => {
     expect(schema!.description).toContain('job_output')
   })
 
+  it('appends a configured description to the generated tool description', async () => {
+    // The sibling-channel use case: two instances on one provider, the second
+    // pinned to a cheaper model, need model-visible wording that says so.
+    const ctx = await setup({ provider: 'mock', description: 'cheap channel note' })
+    const schema = ctx.tools.schemas().find(s => s.name === 'subagent')
+    expect(schema!.description).toContain('job_output')
+    expect(schema!.description).toContain('cheap channel note')
+    // The custom wording follows the generated wording, not replaces it.
+    expect(schema!.description.indexOf('cheap channel note')).toBeGreaterThan(schema!.description.indexOf('job_output'))
+  })
+
+  it('rejects a blank configured description at plugin load, not at first delegation', async () => {
+    let failure: unknown
+    try {
+      await setup({ provider: 'mock', description: '   ' })
+    } catch (error: unknown) {
+      failure = error
+    }
+    expect(String(failure)).toContain('`description` is configured but blank')
+  })
+
   it('omits run_in_background entirely when the instance disables it (schema and capability never disagree)', async () => {
     const ctx = await setup({ provider: 'mock', enableRunInBackground: false })
     const schema = ctx.tools.schemas().find(s => s.name === 'subagent')

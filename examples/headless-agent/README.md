@@ -30,3 +30,7 @@ The overlay creates the same absolute cwd inside the sandbox, but it does not up
 ## Advanced configuration
 
 [`advanced.cordis.yml`](advanced.cordis.yml) adds Code Mode and the Cordis tools to the test composition.
+
+## Pro + Flash hybrid configuration
+
+[`hybrid.cordis.yml`](hybrid.cordis.yml) keeps the main agent on `deepseek-v4-pro` and adds a distinctly named `subagent_flash` channel pinned to `deepseek-v4-flash` through `agentOptions.model`. A configured `description` on the channel tells the model it is the cheap route for simple, self-contained subtasks, so the Pro agent owns planning and complex work while delegating cheap work to Flash children. The keyless snapshot in `tests/headless.snapshot.ts` drives one such delegation through a scripted adapter and asserts the parent requests stay on `deepseek-v4-pro` while the child requests resolve to `deepseek-v4-flash`.

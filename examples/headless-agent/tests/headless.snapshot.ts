@@ -850,6 +850,65 @@ describe('headless stream-json snapshots', () => {
     expect(normalized).toBe(await readFile(streamExpected, 'utf8'))
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
+  it('keeps the parent on Pro while a simple subtask runs on a Flash child', async () => {
+    // The hybrid composition: main agent on deepseek-v4-pro, a distinctly named
+    // subagent_flash channel pinned to deepseek-v4-flash. The scripted mock
+    // drives one delegation; the persisted logs must show the split end to end.
+    const hybridConfigPath = fileURLToPath(new URL('./fixtures/hybrid.cordis.yml', import.meta.url))
+    const result = await runLoaderSmoke({
+      label: 'hybrid Pro + Flash delegation headless smoke',
+      tempDirPrefix: 'headless-snapshot-hybrid-',
+      binScript,
+      libBinScript: binScript,
+      configPath: hybridConfigPath,
+      binArgs: [hybridConfigPath, 'Delegate one simple subtask to the flash channel and report the result.'],
+      tsconfigPath,
+      inspect: async (cwd) => {
+        const logs = await persistedLogs(cwd)
+        expect(logs).toHaveLength(2)
+        const parent = logs.find(log => typeof log.header.parentSession !== 'string')
+        const child = logs.find(log => typeof log.header.parentSession === 'string')
+        if (parent === undefined || child === undefined) throw new Error('hybrid snapshot did not persist parent and child logs')
+        expect(parent.header.delegationDepth).toBe(0)
+        expect(child.header.delegationDepth).toBe(1)
+
+        const parentRecords = parseJsonl(parent.content)
+        const parentCalls = parentRecords.filter(record => record.type === 'tool/call')
+        expect(parentCalls.map(record => (record.data as JsonObject | undefined)?.name)).toEqual(['subagent_flash'])
+
+        const parentHeaders = parentRecords
+          .filter(record => record.type === 'request/header')
+          .map(record => ((record.data as JsonObject | undefined)?.header as JsonObject | undefined)?.config as JsonObject | undefined)
+        expect(parentHeaders.length).toBeGreaterThan(0)
+        for (const header of parentHeaders) expect(header?.model).toBe('deepseek-v4-pro')
+
+        // The channel's model-visible wording rides the tool schema in the
+        // request header, so the model can tell the Flash channel apart.
+        const flashTool = parentRecords
+          .filter(record => record.type === 'request/header')
+          .flatMap((record) => {
+            const header = (record.data as JsonObject | undefined)?.header as JsonObject | undefined
+            return header?.tools as JsonObject[] | undefined ?? []
+          })
+          .find(tool => tool.name === 'subagent_flash')
+        expect(flashTool?.description).toContain('deepseek-v4-flash')
+        expect(flashTool?.description).toContain('simple, self-contained subtasks')
+
+        const childHeaders = parseJsonl(child.content)
+          .filter(record => record.type === 'request/header')
+          .map(record => ((record.data as JsonObject | undefined)?.header as JsonObject | undefined)?.config as JsonObject | undefined)
+        expect(childHeaders.map(header => header?.model)).toEqual(['deepseek-v4-flash'])
+      },
+    })
+
+    expect(result.stderr).toBe('')
+    const records = parseJsonl(result.stdout)
+    expect(records.at(-1)).toMatchObject({
+      type: 'result',
+      output: 'PARENT_RECEIVED_FLASH_RESULT',
+    })
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
   it('replays persistent PTY tools through the one-shot app', async () => {
     const input = JSON.parse(await readFile(join(ptyScenarioDir, 'input.json'), 'utf8')) as {
       steps?: { op?: unknown; text?: unknown }[]

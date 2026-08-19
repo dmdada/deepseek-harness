@@ -30,3 +30,7 @@ pnpm exec vitest run --config vitest.e2e.config.ts packages/e2b/e2b/tests/compos
 ## 高级配置
 
 [`advanced.cordis.yml`](advanced.cordis.yml) 在测试组装中添加 Code Mode 和 Cordis 工具。
+
+## Pro + Flash 混合分工配置
+
+[`hybrid.cordis.yml`](hybrid.cordis.yml) 让主 agent 保持使用 `deepseek-v4-pro`，并通过 `agentOptions.model` 新增一个固定使用 `deepseek-v4-flash` 的独立命名通道 `subagent_flash`。该通道配置的 `description` 会告诉模型它是处理简单、自包含子任务的廉价通道，因此 Pro 主 agent 负责规划和复杂工作，把廉价工作委派给 Flash 子 agent。`tests/headless.snapshot.ts` 中的无密钥快照通过脚本化适配器驱动一次这样的委派，并断言父级请求始终使用 `deepseek-v4-pro`，而子级请求解析为 `deepseek-v4-flash`。

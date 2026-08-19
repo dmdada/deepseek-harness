@@ -51,6 +51,13 @@ export interface Config {
    */
   agentOptions?: AgentOptions
   /**
+   * Extra model-facing wording appended to the generated tool description.
+   * Distinguishes this channel from sibling instances, e.g. a cost or quality
+   * note for a cheap-model delegation tool. Omitted ⇒ the generated wording
+   * stands alone.
+   */
+  description?: string
+  /**
    * Per-child persona that shadows `deployment:persona`. Requires the
    * provider's `persona` capability; omission preserves the deployment persona.
    */
@@ -89,6 +96,7 @@ export const Config: z<Config> = z.object({
     model: z.string(),
     maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
   }).default(undefined as unknown as { provider: string; model: string; maxTokens: number }),
+  description: z.string(),
   persona: z.string(),
   // Preserve omission; Schemastery's `{ allow: [] }` default would deny every tool.
   toolFilter: z.object({
@@ -272,6 +280,11 @@ export function apply(ctx: Context, config: Config): void {
   if (config.toolFilter !== undefined && config.toolFilter.allow === undefined && config.toolFilter.deny === undefined) {
     throw new Error('tool-subagent: `toolFilter` is configured but names neither `allow` nor `deny` — remove the key or fill the filter')
   }
+  // A blank description adds only whitespace to the model-facing wording.
+  if (config.description !== undefined && config.description.trim() === '') {
+    throw new Error('tool-subagent: `description` is configured but blank — remove the key or fill it')
+  }
+  const descriptionSuffix = config.description === undefined ? '' : ` ${config.description.trim()}`
   const backgroundEnabled = config.enableRunInBackground !== false
   const continuable = (config.backgroundMode ?? 'one-shot') === 'continuable'
   const toolName = config.toolName ?? 'subagent'
@@ -303,7 +316,7 @@ export function apply(ctx: Context, config: Config): void {
         ? continuable
           ? ' This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` starts a later turn in the same child conversation. Set `run_in_background: false` only when your next action depends on receiving the result.'
           : ' This call waits for the result by default. Set `run_in_background: true` to return a job id; collect with `job_output` and stop with `job_kill`.'
-        : ' This call waits for the subagent and returns its result.'),
+        : ' This call waits for the subagent and returns its result.') + descriptionSuffix,
       parameters: {
         description: {
           type: 'string',

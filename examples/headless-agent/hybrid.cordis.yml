@@ -1,0 +1,35 @@
+# Pro + Flash hybrid delegation: the main agent owns planning and complex work
+# on deepseek-v4-pro, while simple, self-contained subtasks go to Flash children
+# through the distinctly named subagent_flash channel, pinned to deepseek-v4-flash
+# by agentOptions.model and told apart from the `subagent` tool by description.
+- id: base
+  name: '@deepseek-ai/cordis-plugin-include'
+  config:
+    path: ./cordis.yml
+    patches:
+      - id: agent-spine
+        name: '@deepseek-ai/dsh-agent-spine-demo'
+        config:
+          agents:
+            - id: main
+              provider: deepseek-official
+              model: deepseek-v4-pro
+              cwd: !!js process.cwd()
+          workspaceContext:
+            maxBytes: 65536
+          persona: |
+            You are headless-agent, a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}.
+
+            Verify your work by running the code or tests. Keep answers brief and factual.
+      - insert:
+          - id: tool-subagent-flash
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: spawn
+              toolName: subagent_flash
+              backgroundMode: one-shot
+              enableRunInBackground: false
+              maxDepth: 1
+              agentOptions:
+                model: deepseek-v4-flash
+              description: 'Runs its child on the cheaper deepseek-v4-flash model. Delegate simple, self-contained subtasks (classification, formatting, extraction, quick lookups) here instead of doing them yourself; keep complex reasoning or high-stakes edits on `subagent` or in your own turn.'

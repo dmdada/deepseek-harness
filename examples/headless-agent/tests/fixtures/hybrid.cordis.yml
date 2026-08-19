@@ -1,0 +1,40 @@
+- id: hybrid-mock-llm
+  name: './hybrid-mock-llm.ts'
+
+# Keyless counterpart of ../../hybrid.cordis.yml: same Pro parent + Flash child
+# channel, with the DeepSeek adapter replaced by the scripted hybrid-mock route
+# so the split is provable without a key or network.
+- id: base
+  name: '@deepseek-ai/cordis-plugin-include'
+  config:
+    path: ../../cordis.yml
+    patches:
+      - id: llm-deepseek
+        name: '@deepseek-ai/dsh-llm-deepseek'
+        disabled: true
+      - id: agent-spine
+        name: '@deepseek-ai/dsh-agent-spine-demo'
+        config:
+          agents:
+            - id: main
+              provider: hybrid-mock
+              model: deepseek-v4-pro
+              cwd: !!js process.cwd()
+          workspaceContext: false
+          persona: 'Keyless Pro + Flash hybrid delegation smoke.'
+      - id: persistence
+        name: '@deepseek-ai/dsh-session-persistence-jsonl'
+        config:
+          root: './.sessions'
+      - insert:
+          - id: tool-subagent-flash
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: spawn
+              toolName: subagent_flash
+              backgroundMode: one-shot
+              enableRunInBackground: false
+              maxDepth: 1
+              agentOptions:
+                model: deepseek-v4-flash
+              description: 'Runs its child on the cheaper deepseek-v4-flash model. Delegate simple, self-contained subtasks (classification, formatting, extraction, quick lookups) here instead of doing them yourself; keep complex reasoning or high-stakes edits on `subagent` or in your own turn.'

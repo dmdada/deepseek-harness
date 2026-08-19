@@ -2622,6 +2622,13 @@ export interface Config {
    */
   agentOptions?: AgentOptions
   /**
+   * Extra model-facing wording appended to the generated tool description.
+   * Distinguishes this channel from sibling instances, e.g. a cost or quality
+   * note for a cheap-model delegation tool. Omitted ⇒ the generated wording
+   * stands alone.
+   */
+  description?: string
+  /**
    * Per-child persona that shadows `deployment:persona`. Requires the
    * provider's `persona` capability; omission preserves the deployment persona.
    */
