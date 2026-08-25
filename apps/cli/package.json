@@ -64,6 +64,7 @@
     "@deepseek-ai/dsh-tool-fs": "workspace:^",
     "@deepseek-ai/dsh-tool-fs-search": "workspace:^",
     "@deepseek-ai/dsh-tool-goal": "workspace:^",
+    "@deepseek-ai/dsh-tool-image-vlm": "workspace:^",
     "@deepseek-ai/dsh-tool-pwsh": "workspace:^",
     "@deepseek-ai/dsh-tool-ralph": "workspace:^",
     "@deepseek-ai/dsh-schedule": "workspace:^",
