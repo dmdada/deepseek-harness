@@ -238,6 +238,33 @@ export abstract class SessionPersistence extends Service {
    * @returns one header and opaque revision per materialized session without loading full logs.
    */
   abstract listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot[]>
+
+  /**
+   * Permanently remove one persisted session: its durable log, every
+   * backend-owned artifact, and any in-memory coordinator state bound to the
+   * id. Resolving an absent id is a no-op (the session is already gone).
+   * Deletion is the destructive counterpart to archiving: an archived session
+   * keeps its log so an unarchive restores it, while delete drops the data
+   * irrecoverably.
+   *
+   * Backends owning a per-session physical artifact (JSONL) or a universal
+   * database (SQLite) implement this; a backend that cannot remove durable
+   * session data rejects it loudly with the default below.
+   *
+   * Callers must first ensure the id is not bound to a live Session — deleting
+   * under a live owner races its write-behind and would silently resurrect a
+   * partially-removed log on the next append. Implementations may assert that
+   * precondition and reject a live-bound id.
+   * @param _id - the persisted session to remove.
+   * @param signal - optional cancellation for backend removal work.
+   * @throws when this backend cannot delete persisted session data.
+   */
+  delete(_id: SessionId, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted === true) {
+      return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'))
+    }
+    return Promise.reject(new Error('this session persistence backend cannot delete persisted sessions'))
+  }
 }
 
 export default SessionPersistence

@@ -63,6 +63,17 @@ export class WorkspaceOrderInvalidError extends Error {
   }
 }
 
+/** A deleteSession request named a session still bound to a live owner. */
+export class WorkspaceSessionInUseError extends Error {
+  /**
+   * @param sessionId - The live session id.
+   */
+  constructor(readonly sessionId: SessionId) {
+    super(`cannot delete session '${sessionId}': it is bound to a live session (session-in-use)`)
+    this.name = 'WorkspaceSessionInUseError'
+  }
+}
+
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -251,6 +262,54 @@ export class WorkspaceRegistry extends Service {
       }
       const state = this.requireState()
       await this.setState({ ...state, archivedSessionIds: [...state.archivedSessionIds, sessionId] })
+    })
+  }
+
+  /**
+   * Restore one archived session to every grouping surface by removing it from
+   * the registry-global archive set. The session's log and workspace
+   * accounting slot are untouched, so unarchive restores its prior position.
+   * Idempotent for an id that is not archived.
+   * @param sessionId - The session to unarchive.
+   * @returns resolution after durability.
+   */
+  unarchiveSession(sessionId: SessionId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      if (!state.archivedSessionIds.includes(sessionId)) return
+      await this.setState({
+        ...state,
+        archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+      })
+    })
+  }
+
+  /**
+   * Permanently delete a persisted session: remove it from the archive set,
+   * detach it from every workspace account, and delete its durable session log.
+   * A session still bound to a live owner rejects with
+   * {@link WorkspaceSessionInUseError} (its write-behind would recreate the
+   * artifact); an unknown session rejects with {@link WorkspaceUnknownSessionError}.
+   * @param sessionId - The persisted session to delete.
+   * @returns resolution after the log is durably gone.
+   */
+  deleteSession(sessionId: SessionId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      if (this.ctx.get('sessions')?.get(sessionId) !== undefined) {
+        throw new WorkspaceSessionInUseError(sessionId)
+      }
+      if (!(await this.sessionKnown(sessionId))) {
+        throw new WorkspaceUnknownSessionError(sessionId)
+      }
+      const state = this.requireState()
+      await this.setState({
+        ...state,
+        archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+      })
+      for (const entity of this.entities.values()) {
+        await entity.detachSession(sessionId)
+      }
+      await this.ctx.sessionPersistence.delete(sessionId)
     })
   }
 

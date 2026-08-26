@@ -106,4 +106,24 @@ export interface WorkspaceApi {
    */
   archiveSession(request: RpcRequest<{ sessionId: SessionId }>):
   Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
+
+  /**
+   * Restores one archived session to every grouping surface by removing it
+   * from the registry-global archive set. The session's log and workspace
+   * accounting slot remain, so unarchive restores its prior position.
+   * Idempotent for an id that is not archived. Returns the full updated set
+   * (same snapshot the changed frame carries).
+   */
+  unarchiveSession(request: RpcRequest<{ sessionId: SessionId }>):
+  Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
+
+  /**
+   * Permanently deletes a persisted session: removes it from the archive set,
+   * detaches it from every workspace account, and deletes its durable session
+   * log. A session still bound to a live owner fails with `session-in-use`; a
+   * session neither live nor in session persistence fails with
+   * `session-not-found`. Returns the full updated archive set.
+   */
+  deleteSession(request: RpcRequest<{ sessionId: SessionId }>):
+  Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
 }

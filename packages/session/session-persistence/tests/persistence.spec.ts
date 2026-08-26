@@ -118,6 +118,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
     return this.coordinator.readFrom(id, fromSeq, signal)
   }
 
+  override delete(id: SessionId, signal?: AbortSignal): Promise<void> {
+    return this.coordinator.delete(id, signal)
+  }
+
   // --- PersistenceBackend hooks (the Map storage primitives) ---
 
   // A Map-backed store has no torn tails, so `tornMarker` is never set.
@@ -172,6 +176,12 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
       header: structuredClone(entry.meta),
       revision: memoryRevision(entry),
     }))
+  }
+
+  async deleteStored(id: SessionId): Promise<void> {
+    // The coordinator calls this only after dropping all in-memory state for the
+    // id, so it reaches just the Map; deleting an absent id is a no-op.
+    this.store.delete(id)
   }
 }
 
@@ -279,6 +289,54 @@ runCoordinatorContract('memory', async (): Promise<CoordinatorFixture> => {
     mount: async ctx => ctx.plugin(MemoryPersistence, { store }),
     cleanup: async () => { store.clear() },
   }
+})
+
+describe('SessionPersistence delete', () => {
+  it('removes a materialized session from list and listSnapshots', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const fiber = await ctx.plugin(MemoryPersistence)
+    const m = meta('delete-me')
+    await ctx.sessionPersistence.create(m)
+    await ctx.sessionPersistence.append(m.id, oneTurnLog())
+    expect((await ctx.sessionPersistence.list()).map(h => h.id)).toContain(m.id)
+    expect((await ctx.sessionPersistence.listSnapshots()).map(s => s.header.id)).toContain(m.id)
+
+    await ctx.sessionPersistence.delete(m.id)
+
+    expect((await ctx.sessionPersistence.list()).map(h => h.id)).not.toContain(m.id)
+    expect((await ctx.sessionPersistence.listSnapshots()).map(s => s.header.id)).not.toContain(m.id)
+    await fiber.dispose()
+  })
+
+  it('deleting an absent id resolves as a no-op', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const fiber = await ctx.plugin(MemoryPersistence)
+    await expect(ctx.sessionPersistence.delete(SessionId('absent-delete'))).resolves.toBeUndefined()
+    await fiber.dispose()
+  })
+
+  it('coordinator delete drops only coordinator state when the backend has no deleteStored hook', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const backend = new ControlledBackend()
+    let coordinator!: PersistenceCoordinator<never>
+    const fiber = await ctx.plugin(Object.assign((inner: Context) => {
+      coordinator = new PersistenceCoordinator(inner, backend)
+    }, { inject: ['sessions'] }))
+    const id = SessionId('no-delete-hook')
+    backend.store.set(id, { meta: meta(id), events: oneTurnLog() })
+    try {
+      await coordinator.delete(id)
+      // ControlledBackend declares no deleteStored, so the optional hook is
+      // skipped and only the coordinator's in-memory bookkeeping is dropped.
+      expect(backend.store.get(id)).toBeDefined()
+    } finally {
+      await fiber.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
 })
 
 describe('PersistenceCoordinator seed ownership', () => {
@@ -1823,6 +1881,25 @@ describe('SessionPersistence service registration', () => {
 
     await expect(SessionPersistence.prototype.prepare.call(persistence, id))
       .rejects.toThrow(/SessionStore is not configured/)
+  })
+
+  it('the inherited SessionPersistence.delete default rejects unsupported backends', async () => {
+    const id = SessionId('default-delete')
+    const persistence = {} as unknown as SessionPersistence
+    await expect(SessionPersistence.prototype.delete.call(persistence, id))
+      .rejects.toThrow(/cannot delete persisted sessions/)
+    await expect(SessionPersistence.prototype.delete.call(persistence, id, AbortSignal.abort()))
+      .rejects.toThrow()
+    // A non-Error abort reason falls back to a wrapped Error rejection.
+    const controller = new AbortController()
+    controller.abort('boom')
+    await expect(SessionPersistence.prototype.delete.call(persistence, id, controller.signal))
+      .rejects.toThrow('aborted')
+    const errorController = new AbortController()
+    const errorReason = new Error('delete default aborted')
+    errorController.abort(errorReason)
+    await expect(SessionPersistence.prototype.delete.call(persistence, id, errorController.signal))
+      .rejects.toBe(errorReason)
   })
 
   it('registers as ctx.sessionPersistence and is removed on fiber dispose (HMR safety)', async () => {

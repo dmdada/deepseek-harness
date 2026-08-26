@@ -2788,6 +2788,44 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         }
         return ok(request, { archivedSessionIds: [...archivedSessionIds] })
       },
+      unarchiveSession: (request) => {
+        const missing = requireSession(request)
+        if (missing !== undefined) return missing
+        const { sessionId } = request.payload
+        const index = archivedSessionIds.indexOf(sessionId)
+        if (index !== -1) {
+          archivedSessionIds.splice(index, 1)
+          emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
+        }
+        return ok(request, { archivedSessionIds: [...archivedSessionIds] })
+      },
+      deleteSession: (request) => {
+        const missing = requireSession(request)
+        if (missing !== undefined) return missing
+        const { sessionId } = request.payload
+        const summary = summaryOf(sessionId)
+        if (summary?.running === true) {
+          return err<{ sessionId: SessionId }, { archivedSessionIds: SessionId[] }>(request, {
+            code: 'session-in-use',
+            message: `session ${sessionId} is live`,
+            details: { sessionId },
+          })
+        }
+        const archivedIndex = archivedSessionIds.indexOf(sessionId)
+        if (archivedIndex !== -1) archivedSessionIds.splice(archivedIndex, 1)
+        const sessionsIndex = sessions.findIndex(session => session.sessionId === sessionId)
+        if (sessionsIndex !== -1) sessions.splice(sessionsIndex, 1)
+        logs.delete(sessionId)
+        for (const workspace of workspaces) {
+          if (workspace.sessionIds.includes(sessionId)) {
+            workspace.sessionIds = workspace.sessionIds.filter(id => id !== sessionId)
+            workspace.updatedAt = new Date().toISOString()
+            emitHost({ type: 'host/workspace-changed', workspace: { ...workspace } })
+          }
+        }
+        emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
+        return ok(request, { archivedSessionIds: [...archivedSessionIds] })
+      },
     },
     agentPresets: {
       // Both trusts appear, because a surface must present a locally authored
@@ -3203,6 +3241,8 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.insertBefore': return this.api.workspace.insertBefore(request)
       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+      case 'workspace.unarchiveSession': return this.api.workspace.unarchiveSession(request)
+      case 'workspace.deleteSession': return this.api.workspace.deleteSession(request)
       case 'skill.list': return this.api.skills.list(request)
       case 'agentPreset.list': return this.api.agentPresets.list(request)
       case 'agentPreset.select': return this.api.agentPresets.select(request)

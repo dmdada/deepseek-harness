@@ -778,6 +778,28 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     expect(all.length).toBeGreaterThan(0)
     expect(all.every(p => p.startsWith(root))).toBe(true)
   })
+
+  it('delete removes the session artifact directory and every listing surface', async () => {
+    const m = meta('delete-me', '/work')
+    await ctx.sessionPersistence.create(m)
+    await ctx.sessionPersistence.append(m.id, oneTurnLog())
+    expect((await ctx.sessionPersistence.list()).map(h => h.id)).toContain(m.id)
+
+    const location = ctx.sessionPersistence.locate(m)
+    const sessionDirectory = dirname(location!.path)
+    expect((await stat(sessionDirectory)).isDirectory()).toBe(true)
+
+    await ctx.sessionPersistence.delete(m.id)
+
+    expect((await ctx.sessionPersistence.list()).map(h => h.id)).not.toContain(m.id)
+    expect((await ctx.sessionPersistence.listSnapshots()).map(s => s.header.id)).not.toContain(m.id)
+    expect(await ctx.sessionPersistence.readRaw(m.id)).toBeUndefined()
+    await expect(stat(sessionDirectory)).rejects.toThrow()
+  })
+
+  it('deleting an absent id is a no-op', async () => {
+    await expect(ctx.sessionPersistence.delete(SessionId('absent-delete'))).resolves.toBeUndefined()
+  })
 })
 
 describe('JsonlSessionPersistence: write path (session/event → flush)', () => {

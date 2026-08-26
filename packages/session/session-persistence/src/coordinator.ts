@@ -207,6 +207,19 @@ export interface PersistenceBackend<TornMarker = unknown> {
   locate?(meta: SessionHeader): SessionLocation | undefined
 
   /**
+   * Permanently remove one stored session from the physical medium. Backends
+   * owning one artifact per session delete that artifact (and its now-empty
+   * session directory); a single-database backend deletes the header row,
+   * cascading any child event rows. Removing an absent id is a no-op.
+   * Invoked by the coordinator's {@link PersistenceCoordinator.delete} after it
+   * has dropped all in-memory state for the id, so this hook reaches only the
+   * durable medium.
+   * @param id - persisted session id to remove.
+   * @param signal - optional cancellation for backend removal work.
+   */
+  deleteStored?(id: SessionId, signal?: AbortSignal): Promise<void>
+
+  /**
    * Optional lifecycle teardown (e.g. close a database handle). Awaited by the
    * coordinator's dispose effect AFTER the quiescence drain. A stateless file
    * backend omits it.
@@ -707,6 +720,28 @@ export class PersistenceCoordinator<TornMarker = unknown> {
     state.materialized = true
     state.cursor += events.length
     this.preparations.invalidate(id)
+  }
+
+  /**
+   * Permanently remove one persisted session from the durable medium and drop
+   * every in-memory record the coordinator holds for the id (preparation cache,
+   * ownerless state, and any retirement tail). Resolving an absent id is a
+   * no-op once the preparation/state books are clean.
+   *
+   * Delete runs on the id's serialization chain so it cannot interleave with a
+   * concurrent append; a caller must first ensure the id is not bound to a live
+   * Session (the host deletion orchestration owns that precondition), because a
+   * live owner's write-behind would recreate the artifact on its next flush.
+   * @param id - the persisted session to remove.
+   * @param signal - optional cancellation for backend removal work.
+   */
+  async delete(id: SessionId, signal?: AbortSignal): Promise<void> {
+    return this.serialize(id, async () => {
+      await this.waitForRetirement(id, signal)
+      this.preparations.invalidate(id)
+      this.states.delete(id)
+      await this.backend.deleteStored?.(id, signal)
+    })
   }
 
   /**

@@ -363,6 +363,16 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Archive a session into the registry-global set (hidden from grouping surfaces; session log and accounting slot remain). Archiving the current session clears the selection into the New Session view state.',
         parameters: [{ name: 'sessionId', description: 'session to archive.' }],
       },
+      {
+        signature: 'unarchiveSession(sessionId: SessionId): Promise<void>',
+        description: 'Restore an archived session to every grouping surface by removing it from the registry-global archive set (log and accounting slot remain).',
+        parameters: [{ name: 'sessionId', description: 'session to unarchive.' }],
+      },
+      {
+        signature: 'deleteSession(sessionId: SessionId): Promise<void>',
+        description: 'Permanently delete a persisted session (its archive-set entry, workspace accounts, and durable log are removed); a session bound to a live owner fails with session-in-use.',
+        parameters: [{ name: 'sessionId', description: 'session to delete.' }],
+      },
     ],
   },
 ]

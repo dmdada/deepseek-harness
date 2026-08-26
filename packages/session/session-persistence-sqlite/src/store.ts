@@ -271,6 +271,19 @@ export class SqliteStore implements PersistenceBackend<number> {
     this.db.close()
   }
 
+  /**
+   * Permanently remove one session's header row; the `ON DELETE CASCADE`
+   * foreign key drops every child event row in the same statement. Removing an
+   * absent id is a no-op.
+   * @param id - persisted session id to remove.
+   * @param signal - optional cancellation before the database write.
+   */
+  async deleteStored(id: SessionId, signal?: AbortSignal): Promise<void> {
+    await this.observe(signal)
+    signal?.throwIfAborted()
+    this.db.prepare(sql('delete-session')).run(id)
+  }
+
   private rowFor(id: SessionId): SessionRow | undefined {
     const value = this.db.prepare(sql('select-session')).get(id)
     return value === undefined ? undefined : decodeSessionRow(value)

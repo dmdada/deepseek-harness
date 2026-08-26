@@ -199,6 +199,10 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     return this.coordinator.readFrom(id, fromSeq, signal)
   }
 
+  override delete(id: SessionId, signal?: AbortSignal): Promise<void> {
+    return this.coordinator.delete(id, signal)
+  }
+
   // One method serves both public `list` and the backend hook; delegating it to
   // the coordinator would call this hook recursively.
 
@@ -441,6 +445,23 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     if (tornMarker !== undefined) await this.repair(meta, tornMarker.truncateTo)
     const repairedEvents = [...(tornMarker?.recoveredEvents ?? []), ...closers]
     if (repairedEvents.length > 0) await this.appendLines(meta, repairedEvents)
+  }
+
+  /**
+   * Permanently remove one session's artifact: locate its unique physical log
+   * across every project directory, delete the session-owned directory, and
+   * sync the surviving project directory. A created-but-never-materialized
+   * session has no artifact and resolves as a no-op.
+   * @param id - persisted session id to remove.
+   * @param signal - optional cancellation for backend scan/removal work.
+   */
+  async deleteStored(id: SessionId, signal?: AbortSignal): Promise<void> {
+    const path = await this.findLog(id, signal)
+    if (path === undefined) return
+    const dir = dirname(path)
+    await rm(dir, { recursive: true, force: true })
+    signal?.throwIfAborted()
+    await this.syncDirPosix(dirname(dir))
   }
 
   /** List valid unique stored sessions' metadata (header line only — no full-log parse). */

@@ -830,4 +830,38 @@ describe('SessionPersistenceSqlite edge behavior', () => {
     await expect(store.open()).rejects.toThrow(/ENOENT|ENOTDIR/)
     await store.close()
   })
+
+  it('delete removes the session header and its event rows', async () => {
+    const path = await freshDbPath('dsh-sqlite-delete-')
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const fiber = await ctx.plugin(SessionPersistenceSqlite, { path })
+    const header = meta('delete-me')
+    await ctx.sessionPersistence.create(header)
+    await ctx.sessionPersistence.append(header.id, chunkLog(3))
+    expect((await ctx.sessionPersistence.list()).map(h => h.id)).toContain(header.id)
+
+    const before = new DatabaseSync(path, { readOnly: true })
+    expect(before.prepare(sql('select-events')).all(header.id).length).toBeGreaterThan(0)
+    before.close()
+
+    await ctx.sessionPersistence.delete(header.id)
+
+    expect((await ctx.sessionPersistence.list()).map(h => h.id)).not.toContain(header.id)
+    const after = new DatabaseSync(path, { readOnly: true })
+    expect(after.prepare(sql('select-events')).all(header.id)).toEqual([])
+    expect(after.prepare(sql('select-session')).get(header.id)).toBeUndefined()
+    expect(after.prepare(testSql('count-events')).get()).toEqual({ count: 0 })
+    after.close()
+    await fiber.dispose()
+  })
+
+  it('deleting an absent id is a no-op', async () => {
+    const path = await freshDbPath('dsh-sqlite-delete-absent-')
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const fiber = await ctx.plugin(SessionPersistenceSqlite, { path })
+    await expect(ctx.sessionPersistence.delete(SessionId('absent-delete'))).resolves.toBeUndefined()
+    await fiber.dispose()
+  })
 })

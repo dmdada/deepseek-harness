@@ -14,6 +14,8 @@ import WorkspaceRegistry, {
   WorkspaceId,
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
+  WorkspaceSessionInUseError,
+  WorkspaceUnknownSessionError,
 } from '../src/index.ts'
 import type { WorkspaceDomainState, WorkspaceRecord } from '../src/index.ts'
 
@@ -48,7 +50,8 @@ async function harness(options: HarnessOptions = {}) {
   const list = vi.fn(async () => listed)
   const load = vi.fn(() => { throw new Error('event bodies must not be loaded') })
   const inspect = vi.fn(() => { throw new Error('event bodies must not be inspected') })
-  ctx.provide('sessionPersistence', { list, load, inspect } as never)
+  const del = vi.fn(async () => undefined)
+  ctx.provide('sessionPersistence', { list, load, inspect, delete: del } as never)
 
   if (options.sessionStore === true) {
     await ctx.plugin(SessionStore)
@@ -75,6 +78,7 @@ async function harness(options: HarnessOptions = {}) {
     list,
     load,
     inspect,
+    del,
     setSessions: (headers: SessionHeader[]) => { listed = headers },
   }
 }
@@ -940,5 +944,69 @@ describe('registry-global session archive', () => {
     )
     const upgraded = await harness({ pool: legacy })
     expect(upgraded.registry.archivedSessionIds).toEqual([])
+  })
+})
+
+describe('registry-global session unarchive and delete', () => {
+  it('unarchiveSession removes a session from the archive set and is idempotent for a non-archived id', async () => {
+    const dir = await makeDir('unarchive-home')
+    const result = await harness({ sessions: [header('s1', dir)] })
+    const workspace = result.registry.list()[0]!
+    await workspace.attachSession(SessionId('s1'))
+    await result.registry.archiveSession(SessionId('s1'))
+    expect(result.registry.archivedSessionIds).toEqual(['s1'])
+
+    await result.registry.unarchiveSession(SessionId('s1'))
+    expect(result.registry.archivedSessionIds).toEqual([])
+    expect(storedState(result.pool).archivedSessionIds).toEqual([])
+    // Unarchive leaves the workspace accounting slot and the log untouched.
+    expect(workspace.sessionIds).toEqual(['s1'])
+
+    // Idempotent for a non-archived id: no write, no change event.
+    const globalWrites = result.changes.filter(change => change.table === '').length
+    await result.registry.unarchiveSession(SessionId('s1'))
+    expect(result.registry.archivedSessionIds).toEqual([])
+    expect(result.changes.filter(change => change.table === '').length).toBe(globalWrites)
+  })
+
+  it('deleteSession removes the archive entry, every workspace account, and persists the delete', async () => {
+    const dir = await makeDir('delete-session-home')
+    const otherDir = await makeDir('delete-session-other')
+    const result = await harness({
+      sessions: [header('s1', dir, 100), header('s2', dir, 200), header('s3', otherDir, 300)],
+    })
+    const workspace = result.registry.list().find(item => item.path === dir)!
+    const other = result.registry.list().find(item => item.path === otherDir)!
+    await result.registry.archiveSession(SessionId('s1'))
+    expect(result.registry.archivedSessionIds).toEqual(['s1'])
+
+    await result.registry.deleteSession(SessionId('s1'))
+
+    expect(result.registry.archivedSessionIds).not.toContain('s1')
+    expect(storedState(result.pool).archivedSessionIds).not.toContain('s1')
+    // The owning workspace drops the deleted id; the unrelated workspace is untouched.
+    expect(storedRecord(result.pool, workspace.id).sessionIds).not.toContain('s1')
+    expect(storedRecord(result.pool, workspace.id).sessionIds).toContain('s2')
+    expect(storedRecord(result.pool, other.id).sessionIds).toEqual(['s3'])
+    expect(result.del).toHaveBeenCalledWith(SessionId('s1'))
+  })
+
+  it('deleteSession rejects a session bound to a live owner', async () => {
+    const live = await makeDir('live-in-use')
+    const result = await harness({ liveSessions: [header('live', live, 100)] })
+    await expect(result.registry.deleteSession(SessionId('live')))
+      .rejects.toBeInstanceOf(WorkspaceSessionInUseError)
+    await expect(result.registry.deleteSession(SessionId('live')))
+      .rejects.toMatchObject({ sessionId: SessionId('live') })
+    expect(result.del).not.toHaveBeenCalled()
+  })
+
+  it('deleteSession rejects an unknown session', async () => {
+    const result = await harness({ sessions: [] })
+    await expect(result.registry.deleteSession(SessionId('ghost')))
+      .rejects.toBeInstanceOf(WorkspaceUnknownSessionError)
+    await expect(result.registry.deleteSession(SessionId('ghost')))
+      .rejects.toMatchObject({ sessionId: SessionId('ghost') })
+    expect(result.del).not.toHaveBeenCalled()
   })
 })
