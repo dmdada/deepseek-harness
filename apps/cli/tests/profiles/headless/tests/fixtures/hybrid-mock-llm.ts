@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import {
-  CallId,
+  ToolCallId,
   LlmAdapter,
   type GenerateOptions,
   type StreamChunk,
@@ -41,8 +41,8 @@ class HybridMockAdapter extends LlmAdapter {
       prompt: 'Return FLASH_SUBTASK_COMPLETE.',
     })
     yield { type: 'block-start', index: 0, blockType: 'tool-call' }
-    yield { type: 'tool-call-delta', index: 0, id: CallId('hybrid-flash-call'), name: 'subagent_flash', argumentsDelta: args }
-    yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: CallId('hybrid-flash-call'), name: 'subagent_flash', arguments: args } }
+    yield { type: 'tool-call-delta', index: 0, id: ToolCallId('hybrid-flash-call'), name: 'subagent_flash', argumentsDelta: args }
+    yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: ToolCallId('hybrid-flash-call'), name: 'subagent_flash', arguments: args } }
     yield { type: 'usage', usage: { inputTokens: 6, outputTokens: 4 } }
     yield { type: 'finish', reason: { kind: 'tool-calls' } }
   }

@@ -379,7 +379,8 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
  * @returns the session row.
  */
 export function SessionNodeItem({
-  node, currentId, now, onOpen, onRename, onFork, onArchive, onUnarchive, onDelete, archived = false, drag, flat = false, t,
+  node, currentId, now, onOpen, onRename, onFork, onArchive,
+  onUnarchive = () => {}, onDelete = () => {}, archived = false, drag, flat = false, t,
 }: {
   node: SessionNode
   currentId: string | undefined
@@ -392,9 +393,9 @@ export function SessionNodeItem({
   /** Archive this session (row menu action; commits without a dialog). */
   onArchive: (id: SessionNode['id']) => void
   /** Restore this archived session to the grouping surfaces (row menu action). */
-  onUnarchive: (id: SessionNode['id']) => void
+  onUnarchive?: (id: SessionNode['id']) => void
   /** Permanently delete this persisted session (row menu action on the archived section). */
-  onDelete: (id: SessionNode['id']) => void
+  onDelete?: (id: SessionNode['id']) => void
   /** The row is an archived session: the menu shows restore/delete, and opening is a no-op. */
   archived?: boolean | undefined
   /** Present only on draggable rows (workspace-group sessions outside search). */

@@ -329,6 +329,8 @@ interface FixtureWorkspaceApi {
   insertBefore(request: WorkspaceInsertBeforeRequest): Promise<ConnectionRpcResult<WorkspaceOrderValue>>
   insertSessionBefore(request: WorkspaceInsertSessionBeforeRequest): Promise<ConnectionRpcResult<WorkspaceValue>>
   archiveSession(request: WorkspaceArchiveSessionRequest): Promise<ConnectionRpcResult<WorkspaceArchiveValue>>
+  unarchiveSession(request: WorkspaceArchiveSessionRequest): Promise<ConnectionRpcResult<WorkspaceArchiveValue>>
+  deleteSession(request: WorkspaceArchiveSessionRequest): Promise<ConnectionRpcResult<WorkspaceArchiveValue>>
 }
 
 interface FixtureWorkspace {
@@ -3390,6 +3392,52 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       }
       return sessionOk({ archivedSessionIds: [...archivedSessionIds] })
     },
+    unarchiveSession: (request) => {
+      if (summaryOf(request.sessionId) === undefined) {
+        return sessionErr({
+          code: 'session/not-found',
+          message: `no session ${request.sessionId}`,
+          details: { sessionId: request.sessionId },
+        })
+      }
+      const index = archivedSessionIds.indexOf(request.sessionId)
+      if (index !== -1) {
+        archivedSessionIds.splice(index, 1)
+        emitWorkspace({ type: 'archived', archivedSessionIds: [...archivedSessionIds] })
+      }
+      return sessionOk({ archivedSessionIds: [...archivedSessionIds] })
+    },
+    deleteSession: (request) => {
+      const summary = summaryOf(request.sessionId)
+      if (summary === undefined) {
+        return sessionErr({
+          code: 'session/not-found',
+          message: `no session ${request.sessionId}`,
+          details: { sessionId: request.sessionId },
+        })
+      }
+      if (summary.running === true) {
+        return sessionErr({
+          code: 'session/in-use',
+          message: `session ${request.sessionId} is live`,
+          details: { sessionId: request.sessionId },
+        })
+      }
+      const archivedIndex = archivedSessionIds.indexOf(request.sessionId)
+      if (archivedIndex !== -1) archivedSessionIds.splice(archivedIndex, 1)
+      const sessionsIndex = sessions.findIndex(session => session.sessionId === request.sessionId)
+      if (sessionsIndex !== -1) sessions.splice(sessionsIndex, 1)
+      logs.delete(request.sessionId)
+      for (const workspace of workspaces) {
+        if (workspace.sessionIds.includes(request.sessionId)) {
+          workspace.sessionIds = workspace.sessionIds.filter(id => id !== request.sessionId)
+          workspace.updatedAt = new Date().toISOString()
+          emitWorkspace({ type: 'upsert', workspace: workspaceSnapshot(workspace) })
+        }
+      }
+      emitWorkspace({ type: 'archived', archivedSessionIds: [...archivedSessionIds] })
+      return sessionOk({ archivedSessionIds: [...archivedSessionIds] })
+    },
   }
 
   const rpc: ClientConnectionRpc = {
@@ -3572,6 +3620,8 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           request as WorkspaceInsertSessionBeforeRequest,
         )
         case 'workspace/archiveSession': return workspaceApi.archiveSession(request as WorkspaceArchiveSessionRequest)
+        case 'workspace/unarchiveSession': return workspaceApi.unarchiveSession(request as WorkspaceArchiveSessionRequest)
+        case 'workspace/deleteSession': return workspaceApi.deleteSession(request as WorkspaceArchiveSessionRequest)
         default:
           return Promise.reject(new Error(`fixture connection RPC endpoint ${JSON.stringify(endpoint)} is unavailable`))
       }

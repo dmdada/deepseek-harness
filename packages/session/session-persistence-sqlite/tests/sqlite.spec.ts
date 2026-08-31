@@ -886,7 +886,7 @@ describe('SessionPersistenceSqlite edge behavior', () => {
     await store.close()
   })
 
-  it('delete removes the session header and its event rows', async () => {
+  it('removes the session header and its event rows when deleted', async () => {
     const path = await freshDbPath('dsh-sqlite-delete-')
     const ctx = new Context()
     await ctx.plugin(SessionStore)
@@ -895,10 +895,7 @@ describe('SessionPersistenceSqlite edge behavior', () => {
     await ctx.sessionPersistence.create(header)
     await ctx.sessionPersistence.append(header.id, chunkLog(3))
     expect((await ctx.sessionPersistence.list()).map(h => h.id)).toContain(header.id)
-
-    const before = new DatabaseSync(path, { readOnly: true })
-    expect(before.prepare(sql('select-events')).all(header.id).length).toBeGreaterThan(0)
-    before.close()
+    expect((await ctx.sessionPersistence.inspect(header.id)).events.length).toBeGreaterThan(0)
 
     await ctx.sessionPersistence.delete(header.id)
 

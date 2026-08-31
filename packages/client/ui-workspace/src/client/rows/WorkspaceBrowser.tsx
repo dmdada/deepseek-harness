@@ -352,8 +352,8 @@ function SessionTree({
     [list, orderedWorkspaces, archivedSessionIds, pendingInteractions, expandedGroups, sessionOrderByAccount],
   )
   const archivedRows = useMemo(
-    () => deriveArchivedSessions(list, archivedSessionIds),
-    [list, archivedSessionIds],
+    () => deriveArchivedSessions(list, archivedSessionIds, pendingInteractions),
+    [list, archivedSessionIds, pendingInteractions],
   )
   const now = Date.now()
   const commitSessionDrag = (activeDrag: DragState, over: NonNullable<DragState['over']>): void => {

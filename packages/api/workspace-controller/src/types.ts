@@ -38,6 +38,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       readonly sessionId: SessionId
       readonly beforeSessionId?: SessionId
     }
+    /** The Session is still bound to a live owner and cannot be deleted. */
+    'session/in-use': { readonly sessionId: SessionId }
     /** The verb needs an interaction the composed backend does not serve. */
     'directory-picker/unavailable': { readonly capability: string }
     /** The target is not fully qualified, or the backend cannot list it. */
@@ -101,6 +103,16 @@ export interface WorkspaceInsertSessionBeforeRequest {
 
 /** Session requested for archival from Workspace grouping surfaces. */
 export interface WorkspaceArchiveSessionRequest {
+  readonly sessionId: SessionId
+}
+
+/** Session requested for restoration to Workspace grouping surfaces. */
+export interface WorkspaceUnarchiveSessionRequest {
+  readonly sessionId: SessionId
+}
+
+/** Session requested for permanent deletion of its persisted data. */
+export interface WorkspaceDeleteSessionRequest {
   readonly sessionId: SessionId
 }
 

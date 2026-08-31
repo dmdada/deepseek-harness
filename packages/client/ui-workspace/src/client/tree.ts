@@ -349,7 +349,7 @@ export function deriveFlat(
 export function deriveArchivedSessions(
   list: SessionListState,
   archivedSessionIds: readonly SessionId[],
-  pendingInteractions?: ReadonlyMap<SessionId, number>,
+  pendingInteractions: SessionPendingInteractions = new Map(),
 ): SessionNode[] {
   const archived = new Set(archivedSessionIds)
   const descendants = indexSubagentDescendants(list.byId)

@@ -268,6 +268,16 @@ export class FakeApiClient {
           payload,
           this.onWorkspaceArchiveSession(payload),
         ),
+        unarchiveSession: payload => this.record(
+          'workspace.unarchiveSession',
+          payload,
+          this.onWorkspaceArchiveSession(payload),
+        ),
+        deleteSession: payload => this.record(
+          'workspace.deleteSession',
+          payload,
+          this.onWorkspaceArchiveSession(payload),
+        ),
         follow: signal => this.openWorkspace(signal),
       },
     }
