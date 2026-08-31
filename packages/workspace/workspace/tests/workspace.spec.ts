@@ -32,6 +32,8 @@ interface HarnessOptions {
   pool?: MemoryMediaPool
   sessions?: SessionHeader[]
   liveSessions?: SessionHeader[]
+  /** Session ids whose agent loop reports `running` (the in-flight delete guard). */
+  runningSessions?: SessionId[]
   sessionStore?: boolean
   backend?: StorageBackend
 }
@@ -60,8 +62,15 @@ async function harness(options: HarnessOptions = {}) {
     ctx.provide('sessions', {
       get: (id: SessionId) => live.get(id),
       list: () => [...live.values()],
+      flush: vi.fn(async () => true),
     } as never)
   }
+  // The registry reads `agents` only to decide whether a session's loop is
+  // running (the in-flight delete guard); absent here it reports no live agent.
+  const running = new Set(options.runningSessions ?? [])
+  ctx.provide('agents', {
+    get: (id: SessionId) => running.has(id) ? { status: 'running' as const } : undefined,
+  } as never)
 
   const changes: DomainChanged[] = []
   ctx.on('domain/changed', (change) => { changes.push(change) })
@@ -991,14 +1000,46 @@ describe('registry-global session unarchive and delete', () => {
     expect(result.del).toHaveBeenCalledWith(SessionId('s1'))
   })
 
-  it('deleteSession rejects a session bound to a live owner', async () => {
+  it('deleteSession deletes a cold archived session while another session stays live', async () => {
+    const coldDir = await makeDir('delete-cold-dir')
+    const liveDir = await makeDir('delete-cold-live')
+    // The deleted session is persisted but not attached; the live store holds an
+    // unrelated session, so the flush drain sees no entry for the deleted id.
+    const result = await harness({
+      sessions: [header('s1', coldDir, 100)],
+      liveSessions: [header('open', liveDir, 50)],
+    })
+    await result.registry.archiveSession(SessionId('s1'))
+    await result.registry.deleteSession(SessionId('s1'))
+    expect(result.registry.archivedSessionIds).not.toContain('s1')
+    expect(result.del).toHaveBeenCalledWith(SessionId('s1'))
+  })
+
+  it('deleteSession rejects a session whose agent loop is running', async () => {
     const live = await makeDir('live-in-use')
-    const result = await harness({ liveSessions: [header('live', live, 100)] })
+    const result = await harness({
+      liveSessions: [header('live', live, 100)],
+      runningSessions: [SessionId('live')],
+    })
     await expect(result.registry.deleteSession(SessionId('live')))
       .rejects.toBeInstanceOf(WorkspaceSessionInUseError)
     await expect(result.registry.deleteSession(SessionId('live')))
       .rejects.toMatchObject({ sessionId: SessionId('live') })
     expect(result.del).not.toHaveBeenCalled()
+  })
+
+  it('deleteSession deletes an archived session still attached (idle) to the live store', async () => {
+    const dir = await makeDir('delete-idle-archived')
+    const result = await harness({ liveSessions: [header('s1', dir, 100)] })
+    await result.registry.archiveSession(SessionId('s1'))
+    expect(result.registry.archivedSessionIds).toEqual(['s1'])
+
+    await result.registry.deleteSession(SessionId('s1'))
+
+    // An attached but idle session is not "in use": the delete proceeds, and the
+    // flush drain runs before the artifact is removed.
+    expect(result.registry.archivedSessionIds).not.toContain('s1')
+    expect(result.del).toHaveBeenCalledWith(SessionId('s1'))
   })
 
   it('deleteSession rejects an unknown session', async () => {

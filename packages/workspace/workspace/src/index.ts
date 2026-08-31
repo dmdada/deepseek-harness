@@ -10,6 +10,7 @@ import { stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { WorkspaceEntity } from './entity.ts'
@@ -39,15 +40,17 @@ export function WorkspaceId(id: string): WorkspaceId {
 }
 
 /**
- * An archiveSession request named a session neither live nor in session
+ * An archive/delete request named a session neither live nor in session
  * persistence — a definite miss only; storage faults propagate as themselves.
  */
 export class WorkspaceUnknownSessionError extends Error {
   /**
    * @param sessionId - The unknown session id.
+   * @param operation - The rejected request verb (`archive` or `delete`); it
+   *   appears in the message so the same class reports each verb accurately.
    */
-  constructor(readonly sessionId: SessionId) {
-    super(`cannot archive session '${sessionId}': live sessions and session persistence hold no such session`)
+  constructor(readonly sessionId: SessionId, readonly operation: 'archive' | 'delete') {
+    super(`cannot ${operation} session '${sessionId}': live sessions and session persistence hold no such session`)
     this.name = 'WorkspaceUnknownSessionError'
   }
 }
@@ -63,13 +66,13 @@ export class WorkspaceOrderInvalidError extends Error {
   }
 }
 
-/** A deleteSession request named a session still bound to a live owner. */
+/** A deleteSession request named a session whose agent loop is still running. */
 export class WorkspaceSessionInUseError extends Error {
   /**
-   * @param sessionId - The live session id.
+   * @param sessionId - The running session id.
    */
   constructor(readonly sessionId: SessionId) {
-    super(`cannot delete session '${sessionId}': it is bound to a live session (session-in-use)`)
+    super(`cannot delete session '${sessionId}': its agent loop is running (session-in-use)`)
     this.name = 'WorkspaceSessionInUseError'
   }
 }
@@ -258,7 +261,7 @@ export class WorkspaceRegistry extends Service {
       // check-then-write pair cannot interleave with another archive.
       if (this.requireState().archivedSessionIds.includes(sessionId)) return
       if (!(await this.sessionKnown(sessionId))) {
-        throw new WorkspaceUnknownSessionError(sessionId)
+        throw new WorkspaceUnknownSessionError(sessionId, 'archive')
       }
       const state = this.requireState()
       await this.setState({ ...state, archivedSessionIds: [...state.archivedSessionIds, sessionId] })
@@ -287,19 +290,36 @@ export class WorkspaceRegistry extends Service {
   /**
    * Permanently delete a persisted session: remove it from the archive set,
    * detach it from every workspace account, and delete its durable session log.
-   * A session still bound to a live owner rejects with
-   * {@link WorkspaceSessionInUseError} (its write-behind would recreate the
+   * A session whose agent loop is actively running rejects with
+   * {@link WorkspaceSessionInUseError} (in-flight write-behind would recreate the
    * artifact); an unknown session rejects with {@link WorkspaceUnknownSessionError}.
+   * An attached but idle session (e.g. archived in this app session) is deleted
+   * after its residual write-behind is flushed, so the delete is irreversible.
    * @param sessionId - The persisted session to delete.
    * @returns resolution after the log is durably gone.
    */
   deleteSession(sessionId: SessionId): Promise<void> {
     return this.enqueueOperation(async () => {
-      if (this.ctx.get('sessions')?.get(sessionId) !== undefined) {
+      // Only an actively running loop can write behind the delete and recreate
+      // the artifact. Attaching a session (including an archived one) is not
+      // itself "in use": the live store entry is owned by the creating fiber,
+      // so it cannot be detached here, but an idle session has no in-flight
+      // work once its buffer is drained below.
+      if (this.ctx.get('agents')?.get(sessionId)?.status === 'running') {
         throw new WorkspaceSessionInUseError(sessionId)
       }
       if (!(await this.sessionKnown(sessionId))) {
-        throw new WorkspaceUnknownSessionError(sessionId)
+        throw new WorkspaceUnknownSessionError(sessionId, 'delete')
+      }
+      const sessions = this.ctx.get('sessions')
+      if (sessions !== undefined) {
+        const live = sessions.get(sessionId)
+        if (live !== undefined) {
+          // Flush the still-attached store entry before removing the artifact
+          // so its buffered events reach durability first; a later write-behind
+          // from that entry then has nothing pending and cannot resurrect the log.
+          await sessions.flush(live)
+        }
       }
       const state = this.requireState()
       await this.setState({
