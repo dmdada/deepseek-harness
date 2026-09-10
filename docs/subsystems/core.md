@@ -39,6 +39,11 @@ Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index
  * exposed only to the consumer owner that created it; the structural provider
  * reaches the same teardown internally. Config-created agents (the loop's own
  * startup) are owned by the loop fiber and never need a handle.
+ *
+ * A factory-backed handle also registers its `dispose` as the live entry's
+ * release capability ({@link AgentRegistry.enter}), so an authoritative
+ * lifecycle owner that never held the handle — session deletion, for example —
+ * can retire one idle agent through {@link AgentRegistry.release}.
  */
 interface AgentHandle {
   agent: Agent
@@ -847,12 +852,16 @@ register(agent: Agent): () => void
  * @param owner - explicitly supplied live runtime owner, or
  *   undefined for a top-level runtime root. This is runtime ownership, not
  *   the resumed session's durable parent lineage.
+ * @param release - optional teardown the factory delegates to the entry, so
+ *   {@link release} can retire this exact agent without the caller holding
+ *   its {@link AgentHandle}. The factory passes the same disposer the handle
+ *   returns; omitting it leaves the entry releasable only by its owner.
  * @returns an idempotent closure that removes this exact entry and emits
  *   `agent/disposed` with listener failures contained. When called from a
  *   synchronous `agent/created` listener, removal and disposal wait until
  *   that creation dispatch unwinds.
  */
-enter(agent: Agent, owner: Agent | undefined): () => void
+enter(agent: Agent, owner: Agent | undefined, release?: () => Promise<void>): () => void
 
 /**
  * Announce an agent previously inserted with {@link enter}.
@@ -869,6 +878,22 @@ announce(agent: Agent): void
  * @returns the agent, or undefined when no live agent has that id.
  */
 get(id: SessionId): Agent | undefined
+
+/**
+ * Tear down one live agent through the release capability its creating
+ * factory delegated at {@link enter}. Delegation keeps the owner's ordered
+ * teardown — stop the loop, drain the session's durable write path, leave
+ * both registries, unwind the scoped world — the single dispose path, so the
+ * registry never removes an entry behind its owner's back.
+ *
+ * Session deletion uses this to retire an idle agent it did not create. The
+ * caller decides liveness: releasing a running loop tears it down mid-flight.
+ * An id that is not live, or a live entry registered without a capability
+ * ({@link register}), resolves without releasing anything.
+ * @param id - the shared agent/session id to release.
+ * @returns resolution after the owner's teardown settles.
+ */
+async release(id: SessionId): Promise<void>
 
 /**
  * Test whether a live agent was created through one exact parent agent's

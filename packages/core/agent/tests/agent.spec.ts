@@ -115,6 +115,34 @@ describe('AgentRegistry', () => {
     detachRoot()
   })
 
+  it('releases only the entries whose enterer delegated a release capability', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    // A register() entry carries no per-agent disposer: its registering fiber
+    // stays the only owner, so the registry has nothing to delegate to.
+    ctx.agents.register(stubAgent('fiber-owned'))
+
+    // The capability is the owner's own teardown: releasing delegates to it
+    // instead of removing the entry behind the owner's back.
+    const released: string[] = []
+    const releasable = stubAgent('releasable')
+    const owner: { detach: () => void } = { detach: () => {} }
+    owner.detach = ctx.agents.enter(releasable, undefined, async () => {
+      released.push(releasable.id)
+      owner.detach()
+    })
+    ctx.agents.announce(releasable)
+
+    await ctx.agents.release(SessionId('missing'))
+    await ctx.agents.release(SessionId('fiber-owned'))
+    expect(released).toEqual([])
+    expect(ctx.agents.get(SessionId('fiber-owned'))).toBeDefined()
+
+    await ctx.agents.release(releasable.id)
+    expect(released).toEqual(['releasable'])
+    expect(ctx.agents.get(releasable.id)).toBeUndefined()
+  })
+
   it('rolls an entry back and pairs a partially delivered creation when a listener throws', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentRegistry)

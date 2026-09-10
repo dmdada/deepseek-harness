@@ -407,20 +407,20 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'sessionId', description: 'Session to archive.' }],
       },
       {
+        signature: 'unarchiveSession(sessionId: SessionId): Promise<void>',
+        description: 'Restore an archived Session to Workspace grouping surfaces.',
+        parameters: [{ name: 'sessionId', description: 'Session to unarchive.' }],
+      },
+      {
+        signature: 'deleteSession(sessionId: SessionId): Promise<void>',
+        description: 'Permanently delete a persisted Session and its durable log.',
+        parameters: [{ name: 'sessionId', description: 'Session to delete.' }],
+      },
+      {
         signature: 'insertSessionBefore( workspaceId: WorkspaceId, sessionId: SessionId, beforeSessionId?: SessionId, ): Promise<WorkspaceView>',
         description: 'Move a Session within one Workspace account.',
         parameters: [{ name: 'workspaceId', description: 'owning Workspace.' }, { name: 'sessionId', description: 'Session to move.' }, { name: 'beforeSessionId', description: 'anchor Session; omitted appends.' }],
         returns: 'the changed Workspace.',
-      },
-      {
-        signature: 'unarchiveSession(sessionId: SessionId): Promise<void>',
-        description: 'Restore an archived session to every grouping surface by removing it from the registry-global archive set (log and accounting slot remain).',
-        parameters: [{ name: 'sessionId', description: 'session to unarchive.' }],
-      },
-      {
-        signature: 'deleteSession(sessionId: SessionId): Promise<void>',
-        description: 'Permanently delete a persisted session (its archive-set entry, workspace accounts, and durable log are removed); a session bound to a live owner fails with session-in-use.',
-        parameters: [{ name: 'sessionId', description: 'session to delete.' }],
       },
     ],
   },

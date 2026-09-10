@@ -21,16 +21,16 @@ The feature note (`2026-08-10-delete-and-unarchive-archived-sessions.md`) states
 Narrow the guard to genuinely in-flight work and drain residual buffered events before removing the artifact.
 
 - `deleteSession` rejects only when `ctx.agents.get(sessionId)?.status === 'running'`. Merely being attached (including an archived session) is not "in use"; the note's intended "in-flight owners" is now what the guard measures.
-- A session still attached but idle is flushed (`sessions.flush`) before the artifact is removed. The live store entry is owned by the creating fiber and cannot be detached from here, but draining its buffer means a later write-behind has nothing pending and cannot resurrect the deleted log.
+- A session still attached but idle is released through its owning lifecycle (`ctx.agents.release`) before the artifact is removed, so the live store entry goes with the log ([live-entry release note](2026-09-10-session-delete-releases-the-live-entry.md)). A live entry whose owner delegated no release capability is flushed (`sessions.flush`) instead: draining its buffer means a later write-behind has nothing pending and cannot resurrect the deleted log.
 
 `WorkspaceUnknownSessionError` gained a required `operation` parameter so the same class reports the right verb (`cannot archive session` vs `cannot delete session`); earlier it always said "cannot archive session" even on a delete.
 
 ## Alternatives considered
 
-**Detach (dispose) the attached session from the registry before delete.** The session teardown is deliberately owned by the creating fiber and forcing a host-side dispose races its write-behind (the feature note already rejected this). Keeping the owning fiber alive while flushing the entry is the safe bounded version.
+**Detach (dispose) the attached session from the registry before delete.** The session teardown is deliberately owned by the creating fiber and forcing a host-side dispose races its write-behind (the feature note already rejected this). Draining the owning fiber's entry without removing it was the bounded version here; the successor releases the entry by delegating to that owner's own disposer ([live-entry release note](2026-09-10-session-delete-releases-the-live-entry.md)).
 
 **Keep the broad guard and close the session on archive.** Shifts the behavior to a different surface and would silently detach a session the user is only hiding; deleting an archived-but-idle session directly is the requested product behavior.
 
 ## Consequences
 
-Deleting an archived session that is attached but idle now succeeds: the archive entry, every workspace account, and the durable log are removed. A session whose agent loop is still running is still refused (`session/in-use`) so in-flight write-behind cannot recreate the artifact. `session/not-found` now reports the correct verb. A session object left in the live store after delete is invisible to the sidebar (the persisted record is gone) and is reclaimed when its owning fiber disposes.
+Deleting an archived session that is attached but idle now succeeds: the archive entry, every workspace account, the live session entry, and the durable log are removed. A session whose agent loop is still running is still refused (`session/in-use`) so in-flight write-behind cannot recreate the artifact. `session/not-found` now reports the correct verb.

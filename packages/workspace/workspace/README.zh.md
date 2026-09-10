@@ -157,7 +157,8 @@ ctx.workspaceRegistry.list() // shows the project, newest first
 
 这些限制说明项目列表何时不合适，或何时需要特别的运维注意。它们是当前包约束，不是任务积压。
 
-- **移除绝不删除用户数据**——移除项目会保留其文件夹与文件；这些会话变成 Ungrouped。会话删除的作用范围限于日志：`deleteSession(id)` 移除归档条目、每个 workspace 记账与持久化日志，但绝不删除 workspace 目录或用户文件；破坏性文件夹移除仍是独立且尚未提供的功能（参见[决策记录](../../../.agents/notes/implemented/feature/2026-07-27-workspace-registration-deletion.zh.md)）。
+- **移除绝不删除用户数据**——移除项目会保留其文件夹与文件；这些会话变成 Ungrouped。会话删除的作用范围限于日志：`deleteSession(id)` 移除归档条目、每个 workspace 记账、活动会话条目与持久化日志，但绝不删除 workspace 目录或用户文件；破坏性文件夹移除仍是独立且尚未提供的功能（参见[决策记录](../../../.agents/notes/implemented/feature/2026-07-27-workspace-registration-deletion.zh.md)）。
+- **无可释放能力的活动会话只会被排空**——删除通过 `ctx.agents.release` 收回空闲的活动会话，而这需要产出该条目的 agent 工厂。若会话是在没有该能力的情况下进入的（未挂载 agent registry，或条目在工厂之外注册），则只做 flush，其活动行会保留在会话列表中，直到其所有者释放它。
 - **只有带记录目录的会话才能加入**——只有记录中带有可解析为项目路径的目录的会话才属于项目；没有目录的会话保持 Ungrouped，来自其他目录的会话无法移入。
 - **外部变更延迟可见**——如果另一进程删除或损坏目录，项目只能在下次刷新或重启后反映出来。
 - **归档保持非破坏性**——被归档的会话仅被隐藏而不删除其日志，`unarchiveSession` 可将其恢复到所有分组界面。

@@ -408,6 +408,28 @@ abstract stat(id: SessionId, options?: SessionPersistenceStatOptions): Promise<S
  * @returns one snapshot per stored session.
  */
 abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+/**
+ * Permanently remove one stored session and every artifact this backend owns
+ * for it, releasing the id for reuse. Resolving an absent id is a no-op: a
+ * session that never materialized and a session already removed both have
+ * nothing left to remove.
+ *
+ * Deletion is the unrecoverable counterpart to archiving — an archived
+ * session keeps its log so a later `open` restores it, while delete drops the
+ * data. A caller must first establish that no live write handle owns the id:
+ * deleting under an active owner races that owner's write-behind, which would
+ * recreate a partially-removed log.
+ *
+ * Backends that own per-session durable storage implement this. A backend
+ * that cannot remove stored sessions inherits this default, which rejects
+ * loudly rather than leaving the data in place unreported.
+ * @param _id - the stored session to remove.
+ * @param options - optional cancellation.
+ * @returns a rejection: this default never removes anything.
+ * @throws when this backend cannot delete stored sessions.
+ */
+delete(_id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<void>
 ```
 
 Types: [SessionId](core.md)

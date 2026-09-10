@@ -288,12 +288,13 @@ export class WorkspaceRegistry extends Service {
 
   /**
    * Permanently delete a persisted session: remove it from the archive set,
-   * detach it from every workspace account, and delete its durable session log.
-   * A session whose agent loop is actively running rejects with
-   * {@link WorkspaceSessionInUseError} (in-flight write-behind would recreate the
-   * artifact); an unknown session rejects with {@link WorkspaceUnknownSessionError}.
-   * An attached but idle session (e.g. archived in this app session) is deleted
-   * after its residual write-behind is flushed, so the delete is irreversible.
+   * detach it from every workspace account, release its live entry, and delete
+   * its durable session log. A session whose agent loop is actively running
+   * rejects with {@link WorkspaceSessionInUseError} (in-flight write-behind
+   * would recreate the artifact); an unknown session rejects with
+   * {@link WorkspaceUnknownSessionError}. An attached but idle session is
+   * released through its owning lifecycle, so the delete is irreversible and
+   * the session leaves every list surface.
    * @param sessionId - The persisted session to delete.
    * @returns resolution after the log is durably gone.
    */
@@ -301,22 +302,26 @@ export class WorkspaceRegistry extends Service {
     return this.enqueueOperation(async () => {
       // Only an actively running loop can write behind the delete and recreate
       // the artifact. Attaching a session (including an archived one) is not
-      // itself "in use": the live store entry is owned by the creating fiber,
-      // so it cannot be detached here, but an idle session has no in-flight
-      // work once its buffer is drained below.
+      // itself "in use".
       if (this.ctx.get('agents')?.get(sessionId)?.status === 'running') {
         throw new WorkspaceSessionInUseError(sessionId)
       }
       if (!(await this.sessionKnown(sessionId))) {
         throw new WorkspaceUnknownSessionError(sessionId, 'delete')
       }
+      // Retire the live entry before the artifact goes. Releasing through the
+      // owning lifecycle stops the loop, drains its durable write path, and
+      // leaves the session store, so a deleted session stops appearing on every
+      // list surface instead of lingering as a live row with no log behind it.
+      await this.ctx.get('agents')?.release(sessionId)
       const sessions = this.ctx.get('sessions')
       if (sessions !== undefined) {
         const live = sessions.get(sessionId)
         if (live !== undefined) {
-          // Flush the still-attached store entry before removing the artifact
-          // so its buffered events reach durability first; a later write-behind
-          // from that entry then has nothing pending and cannot resurrect the log.
+          // A live entry whose owner delegated no release capability (no agent
+          // factory produced it) only needs its buffered events on disk before
+          // the artifact goes; a later write-behind from that entry then has
+          // nothing pending and cannot resurrect the log.
           await sessions.flush(live)
         }
       }

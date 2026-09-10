@@ -307,9 +307,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the EXACT Cordis effect disposer (single-shot; a repeat call returns undefined without awaiting an in-flight teardown). Exact identity is load-bearing: a composite (generator) effect that owns a teardown ORDER — the agent factory\'s lifecycle chain — must yield THIS function so Cordis nests the unregistration at that yield position; yielding a wrapper would leave it disposing as a concurrent sibling on owner unload, unregistering the agent (and emitting `agent/disposed`) while its final turn is still draining.',
       },
       {
-        signature: 'enter(agent: Agent, owner: Agent | undefined): () => void',
+        signature: 'enter(agent: Agent, owner: Agent | undefined, release?: () => Promise<void>): () => void',
         description: 'Insert an already-constructed agent without announcing it. This is the advanced ordered-lifecycle primitive used by the async agent factory: it first completes setup while the agent is unpublished, then assigns the returned detach closure into its pre-installed composite teardown before calling announce. Ordinary callers use register.',
-        parameters: [{ name: 'agent', description: 'the prepared, unpublished agent.' }, { name: 'owner', description: 'explicitly supplied live runtime owner, or undefined for a top-level runtime root. This is runtime ownership, not the resumed session\'s durable parent lineage.' }],
+        parameters: [{ name: 'agent', description: 'the prepared, unpublished agent.' }, { name: 'owner', description: 'explicitly supplied live runtime owner, or undefined for a top-level runtime root. This is runtime ownership, not the resumed session\'s durable parent lineage.' }, { name: 'release', description: 'optional teardown the factory delegates to the entry, so {@link release} can retire this exact agent without the caller holding its {@link AgentHandle}. The factory passes the same disposer the handle returns; omitting it leaves the entry releasable only by its owner.' }],
         returns: 'an idempotent closure that removes this exact entry and emits `agent/disposed` with listener failures contained. When called from a synchronous `agent/created` listener, removal and disposal wait until that creation dispatch unwinds.',
       },
       {
@@ -323,6 +323,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Look up a live agent.',
         parameters: [{ name: 'id', description: 'the shared agent/session id to look up.' }],
         returns: 'the agent, or undefined when no live agent has that id.',
+      },
+      {
+        signature: 'async release(id: SessionId): Promise<void>',
+        description: 'Tear down one live agent through the release capability its creating factory delegated at enter. Delegation keeps the owner\'s ordered teardown — stop the loop, drain the session\'s durable write path, leave both registries, unwind the scoped world — the single dispose path, so the registry never removes an entry behind its owner\'s back.\n\nSession deletion uses this to retire an idle agent it did not create. The caller decides liveness: releasing a running loop tears it down mid-flight. An id that is not live, or a live entry registered without a capability (register), resolves without releasing anything.',
+        parameters: [{ name: 'id', description: 'the shared agent/session id to release.' }],
+        returns: 'resolution after the owner\'s teardown settles.',
       },
       {
         signature: 'isOwnedBy(id: SessionId, owner: Agent): boolean',
@@ -1626,6 +1632,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'options', description: 'optional cancellation.' }],
         returns: 'one snapshot per stored session.',
       },
+      {
+        signature: 'delete(_id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<void>',
+        description: 'Permanently remove one stored session and every artifact this backend owns for it, releasing the id for reuse. Resolving an absent id is a no-op: a session that never materialized and a session already removed both have nothing left to remove.\n\nDeletion is the unrecoverable counterpart to archiving — an archived session keeps its log so a later `open` restores it, while delete drops the data. A caller must first establish that no live write handle owns the id: deleting under an active owner races that owner\'s write-behind, which would recreate a partially-removed log.\n\nBackends that own per-session durable storage implement this. A backend that cannot remove stored sessions inherits this default, which rejects loudly rather than leaving the data in place unreported.',
+        parameters: [{ name: '_id', description: 'the stored session to remove.' }, { name: 'options', description: 'optional cancellation.' }],
+        returns: 'a rejection: this default never removes anything.',
+        throws: ['when this backend cannot delete stored sessions.'],
+      },
     ],
   },
   {
@@ -2909,6 +2922,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the complete resulting archive set.',
       },
       {
+        signature: '@Remote(\'unarchiveSession\') unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<WorkspaceArchiveValue>',
+        description: 'Restore one archived Session to Workspace grouping surfaces.',
+        parameters: [{ name: 'request', description: 'Session identity to unarchive.' }],
+        returns: 'the complete resulting archive set.',
+      },
+      {
+        signature: '@Remote(\'deleteSession\') deleteSession(request: WorkspaceDeleteSessionRequest): Promise<WorkspaceArchiveValue>',
+        description: 'Permanently delete one persisted Session and its durable log.',
+        parameters: [{ name: 'request', description: 'Session identity to delete.' }],
+        returns: 'the complete resulting archive set.',
+      },
+      {
         signature: '@Remote({ mode: \'stream\' }) follow(signal: AbortSignal): AsyncIterable<WorkspaceFollowFrame>',
         description: 'Stream a complete Workspace baseline followed by ordered increments.',
         parameters: [{ name: 'signal', description: 'generation cancellation.' }],
@@ -3008,15 +3033,15 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'unarchiveSession(sessionId: SessionId): Promise<void>',
-        description: 'Restore one archived session to every grouping surface by removing it from the registry-global archive set. An id that is not archived resolves without writing.',
+        description: 'Restore one archived session to every grouping surface by removing it from the registry-global archive set. The session\'s log and workspace accounting slot are untouched, so unarchive restores its prior position. Idempotent for an id that is not archived.',
         parameters: [{ name: 'sessionId', description: 'The session to unarchive.' }],
         returns: 'resolution after durability.',
       },
       {
         signature: 'deleteSession(sessionId: SessionId): Promise<void>',
-        description: 'Permanently delete a persisted session: its archive-set entry, workspace accounting detach, and durable log are all removed. A session still bound to a live owner fails with session-in-use.',
-        parameters: [{ name: 'sessionId', description: 'The session to delete.' }],
-        returns: 'resolution after durability.',
+        description: 'Permanently delete a persisted session: remove it from the archive set, detach it from every workspace account, release its live entry, and delete its durable session log. A session whose agent loop is actively running rejects with WorkspaceSessionInUseError (in-flight write-behind would recreate the artifact); an unknown session rejects with WorkspaceUnknownSessionError. An attached but idle session is released through its owning lifecycle, so the delete is irreversible and the session leaves every list surface.',
+        parameters: [{ name: 'sessionId', description: 'The persisted session to delete.' }],
+        returns: 'resolution after the log is durably gone.',
       },
       {
         signature: 'async resolveByPath(path: string): Promise<Workspace | undefined>',
@@ -5303,6 +5328,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionPersistenceCreateOptions {\n    readonly signal?: AbortSignal;\n    readonly inheritedEventCount?: SessionLogOffset;\n}',
   },
   {
+    name: 'SessionPersistenceDeleteOptions',
+    declaration: 'export interface SessionPersistenceDeleteOptions {\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
     name: 'SessionPersistenceListOptions',
     declaration: 'export interface SessionPersistenceListOptions {\n    readonly signal?: AbortSignal;\n}',
   },
@@ -6451,6 +6480,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface WorkspaceDeleteRequest {\n    readonly workspaceId: WorkspaceId;\n}',
   },
   {
+    name: 'WorkspaceDeleteSessionRequest',
+    declaration: 'export interface WorkspaceDeleteSessionRequest {\n    readonly sessionId: SessionId;\n}',
+  },
+  {
     name: 'WorkspaceDeleteValue',
     declaration: 'export interface WorkspaceDeleteValue {\n    readonly deleted: true;\n}',
   },
@@ -6513,6 +6546,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceRenameRequest',
     declaration: 'export interface WorkspaceRenameRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly title: string;\n}',
+  },
+  {
+    name: 'WorkspaceUnarchiveSessionRequest',
+    declaration: 'export interface WorkspaceUnarchiveSessionRequest {\n    readonly sessionId: SessionId;\n}',
   },
   {
     name: 'WorkspaceValue',

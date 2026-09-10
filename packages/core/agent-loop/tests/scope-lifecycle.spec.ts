@@ -936,6 +936,28 @@ describe('agent scope lifecycle', () => {
     expect(() => handle.agent.ctx.on('agent/status', () => {})).toThrow(/inactive context/)
   })
 
+  it('releases an idle agent through the registry, leaving both registries', async () => {
+    const ctx = await harness()
+    const lifecycle: string[] = []
+    ctx.on('agent/disposed', ({ agent }) => void lifecycle.push(`agent-disposed:${agent.id}`))
+    ctx.on('session/disposed', session => void lifecycle.push(`session-disposed:${session.id}`))
+    const handle = await ctx.agents.create({
+      sessionId: SessionId('release-me'),
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+    expect(ctx.agents.get(SessionId('release-me'))).toBe(handle.agent)
+    expect(ctx.sessions.get(SessionId('release-me'))).toBeDefined()
+
+    await ctx.agents.release(SessionId('release-me'))
+
+    expect(lifecycle).toEqual(['agent-disposed:release-me', 'session-disposed:release-me'])
+    expect(ctx.agents.get(SessionId('release-me'))).toBeUndefined()
+    expect(ctx.sessions.get(SessionId('release-me'))).toBeUndefined()
+    // The handle owns the same memoized teardown; the release did not orphan it.
+    await handle.dispose()
+    expect(lifecycle).toEqual(['agent-disposed:release-me', 'session-disposed:release-me'])
+  })
+
   it('agentEvents fuses carrier and subject for custom drivers', async () => {
     const ctx = await harness()
     const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })

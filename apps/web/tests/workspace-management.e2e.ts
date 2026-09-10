@@ -5,12 +5,13 @@
 // trip over the real wire (workspace.rename RPC + durable registry), the
 // duplicate-name pre-check, the
 // flat "In one list" view with its persisted group-by preference, the session
-// hover card and row action menu, and the session archive round trip (row
-// menu → workspace.archiveSession RPC → durable global set → row hidden
-// across reload). Zero model calls: workspace.create/rename/archiveSession
+// hover card and row action menu, and the session archive + delete round trip
+// (row menu → workspace.archiveSession / deleteSession RPC → durable global
+// set and log → row hidden across reload). Zero model calls:
+// workspace.create/rename/archiveSession/deleteSession
 // are host RPCs with no model involvement, and the one session row the
-// flat/hover/menu/archive scenarios need comes from a seeded fixture (the
-// seeded-history seed reused verbatim — no new recording).
+// flat/hover/menu/archive/delete scenarios need comes from a seeded fixture
+// (the seeded-history seed reused verbatim — no new recording).
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join, sep } from 'node:path'
@@ -638,6 +639,57 @@ describe('web e2e: workspace management (create / rename / flat view / hover aff
     // reappear if selection restore lands on another stray — not this test's
     // concern).
     expect(await sessionRow.count()).toBe(0)
+    expect(tripwire.pageErrors).toEqual([])
+  }, 90_000)
+
+  it('deletes the archived seeded session, leaving no live entry or stray row behind', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-ws-delete-session'))
+    // Own every precondition: pinning a user title resolves (and resumes) the
+    // seed, so it is live and attached before the delete, and archiving through
+    // the host puts its row in the Archived section the delete lives in.
+    const { title } = await scaffold.ctx.sessionController.rename({
+      sessionId: SessionId(SEED_ID), title: `Delete target ${SEED_ID}`,
+    })
+    await expect.poll(
+      () => scaffold.ctx.sessions.get(SessionId(SEED_ID)) === undefined,
+      { timeout: 10_000 },
+    ).toBe(false)
+    await scaffold.ctx.workspaceRegistry.archiveSession(SessionId(SEED_ID))
+    const archivedRow = page.getByRole('treeitem').filter({
+      has: page.getByText(title, { exact: true }),
+    })
+    await expect.poll(() => archivedRow.count(), { timeout: 10_000 }).toBe(1)
+    // Delete is permanent and commits from the archived row menu without a
+    // confirmation dialog.
+    await clickHoverAction(archivedRow, `Session actions for ${title}`)
+    await page.getByRole('menuitem', { name: 'Delete session' }).click()
+
+    // Host truth: the live session, its agent, and the log are all gone.
+    await expect.poll(
+      () => scaffold.ctx.sessions.get(SessionId(SEED_ID)) === undefined,
+      { timeout: 10_000 },
+    ).toBe(true)
+    expect(scaffold.ctx.agents.get(SessionId(SEED_ID))).toBeUndefined()
+    await expect.poll(
+      async () => (await scaffold.ctx.sessionPersistence.list())
+        .some(snapshot => snapshot.header.id === SessionId(SEED_ID)),
+      { timeout: 10_000 },
+    ).toBe(false)
+    expect([...scaffold.ctx.workspaceRegistry.archivedSessionIds]).toEqual([])
+    // A reload rebuilds the tree from the host's session list: the deleted row
+    // must appear nowhere, in particular not as a stray under Ungrouped.
+    const warningStart = tripwire.warnings.length
+    await page.reload({ waitUntil: 'load' })
+    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    acknowledgeReloadConnectionLoss(tripwire, warningStart)
+    await expect.poll(() => page.getByText('Workspaces', { exact: true }).count(), { timeout: 15_000 }).toBe(1)
+    await page.locator('[role="treeitem"][aria-selected="true"]').waitFor({ timeout: 15_000 })
+    await expect.poll(
+      () => page.locator('[data-composer-input][contenteditable="true"]')
+        .evaluate(element => element === document.activeElement),
+      { timeout: 15_000 },
+    ).toBe(true)
+    expect(await page.getByText(title, { exact: true }).count()).toBe(0)
     expect(tripwire.pageErrors).toEqual([])
   }, 90_000)
 

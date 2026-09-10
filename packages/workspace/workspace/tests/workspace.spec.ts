@@ -38,6 +38,11 @@ interface HarnessOptions {
   liveSessions?: SessionHeader[]
   /** Session ids whose agent loop reports `running` (the in-flight delete guard). */
   runningSessions?: SessionId[]
+  /**
+   * Whether live agents delegate a release capability; `false` models a live
+   * entry no agent factory produced.
+   */
+  releasable?: boolean
   sessionStore?: boolean
   backend?: StorageBackend
 }
@@ -60,21 +65,28 @@ async function harness(options: HarnessOptions = {}) {
   const del = vi.fn(async () => undefined)
   ctx.provide('sessionPersistence', { list, open, stat, delete: del } as never)
 
+  let live: Map<SessionId, { header: SessionHeader }> | undefined
+  const flush = vi.fn(async () => true)
   if (options.sessionStore === true) {
     await ctx.plugin(SessionStore)
   } else if (options.liveSessions !== undefined) {
-    const live = new Map(options.liveSessions.map(meta => [meta.id, { header: meta }]))
+    live = new Map(options.liveSessions.map(meta => [meta.id, { header: meta }]))
     ctx.provide('sessions', {
-      get: (id: SessionId) => live.get(id),
-      list: () => [...live.values()],
-      flush: vi.fn(async () => true),
+      get: (id: SessionId) => live?.get(id),
+      list: () => [...live?.values() ?? []],
+      flush,
     } as never)
   }
-  // The registry reads `agents` only to decide whether a session's loop is
-  // running (the in-flight delete guard); absent here it reports no live agent.
+  // The registry reads `agents` for the in-flight delete guard and asks it to
+  // release an idle live entry; absent here it reports no live agent.
   const running = new Set(options.runningSessions ?? [])
+  const release = vi.fn(async (id: SessionId) => {
+    if (options.releasable === false) return
+    live?.delete(id)
+  })
   ctx.provide('agents', {
     get: (id: SessionId) => running.has(id) ? { status: 'running' as const } : undefined,
+    release,
   } as never)
 
   const changes: DomainChanged[] = []
@@ -93,6 +105,9 @@ async function harness(options: HarnessOptions = {}) {
     open,
     stat,
     del,
+    release,
+    flush,
+    liveSessionIds: () => [...live?.keys() ?? []],
     setSessions: (headers: SessionHeader[]) => { listed = headers },
   }
 }
@@ -1050,8 +1065,26 @@ describe('registry-global session archive', () => {
     await result.registry.deleteSession(SessionId('s1'))
 
     // An attached but idle session is not "in use": the delete proceeds, and the
-    // flush drain runs before the artifact is removed.
+    // owning lifecycle releases the live entry before the artifact is removed.
     expect(result.registry.archivedSessionIds).not.toContain('s1')
+    expect(result.release).toHaveBeenCalledWith(SessionId('s1'))
+    expect(result.liveSessionIds()).toEqual([])
+    // A released entry is gone from the store, so no drain is owed.
+    expect(result.flush).not.toHaveBeenCalled()
+    expect(result.del).toHaveBeenCalledWith(SessionId('s1'))
+  })
+
+  it('deleteSession drains a live entry whose owner delegated no release capability', async () => {
+    const dir = await makeDir('delete-idle-unreleasable')
+    const result = await harness({ liveSessions: [header('s1', dir, 100)], releasable: false })
+
+    await result.registry.deleteSession(SessionId('s1'))
+
+    // Nothing can retire this entry, so the delete still drains its buffer
+    // before the artifact goes.
+    expect(result.release).toHaveBeenCalledWith(SessionId('s1'))
+    expect(result.liveSessionIds()).toEqual(['s1'])
+    expect(result.flush).toHaveBeenCalledTimes(1)
     expect(result.del).toHaveBeenCalledWith(SessionId('s1'))
   })
 

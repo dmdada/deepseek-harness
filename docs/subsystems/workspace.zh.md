@@ -233,6 +233,20 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('archiveSession') archiveSession(request: WorkspaceArchiveSessionRequest): Promise<WorkspaceArchiveValue>
 
 /**
+ * Restore one archived Session to Workspace grouping surfaces.
+ * @param request - Session identity to unarchive.
+ * @returns the complete resulting archive set.
+ */
+@Remote('unarchiveSession') unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<WorkspaceArchiveValue>
+
+/**
+ * Permanently delete one persisted Session and its durable log.
+ * @param request - Session identity to delete.
+ * @returns the complete resulting archive set.
+ */
+@Remote('deleteSession') deleteSession(request: WorkspaceDeleteSessionRequest): Promise<WorkspaceArchiveValue>
+
+/**
  * Stream a complete Workspace baseline followed by ordered increments.
  * @param signal - generation cancellation.
  * @returns baseline followed by ordered Workspace increments.
@@ -383,6 +397,30 @@ insertBefore(id: WorkspaceId, beforeId?: WorkspaceId): Promise<readonly Workspac
  * @returns resolution after durability.
  */
 archiveSession(sessionId: SessionId): Promise<void>
+
+/**
+ * Restore one archived session to every grouping surface by removing it from
+ * the registry-global archive set. The session's log and workspace
+ * accounting slot are untouched, so unarchive restores its prior position.
+ * Idempotent for an id that is not archived.
+ * @param sessionId - The session to unarchive.
+ * @returns resolution after durability.
+ */
+unarchiveSession(sessionId: SessionId): Promise<void>
+
+/**
+ * Permanently delete a persisted session: remove it from the archive set,
+ * detach it from every workspace account, release its live entry, and delete
+ * its durable session log. A session whose agent loop is actively running
+ * rejects with {@link WorkspaceSessionInUseError} (in-flight write-behind
+ * would recreate the artifact); an unknown session rejects with
+ * {@link WorkspaceUnknownSessionError}. An attached but idle session is
+ * released through its owning lifecycle, so the delete is irreversible and
+ * the session leaves every list surface.
+ * @param sessionId - The persisted session to delete.
+ * @returns resolution after the log is durably gone.
+ */
+deleteSession(sessionId: SessionId): Promise<void>
 
 /**
  * Resolve by canonical directory path without creating or mutating a

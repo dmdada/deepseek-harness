@@ -104,7 +104,7 @@ The package is built on one separation: the public `Agent` surface and registry 
 
 ### Registry and lifecycle
 
-`AgentRegistry` keeps one entry per live agent with its carrier and creator relation. `register()` records an already-constructed agent; the async factory uses the split `enter()`/`announce()` pair so setup and publication stay rollback-covered. A detach requested during a creation dispatch waits for that dispatch to unwind, and each detach is bound to the exact entry, so a stale disposer cannot remove a later same-id replacement. Teardown order is stop-and-drain the loop, unwind the scope, detach the agent, detach the session; the id becomes reusable after private cleanup.
+`AgentRegistry` keeps one entry per live agent with its carrier and creator relation. `register()` records an already-constructed agent; the async factory uses the split `enter()`/`announce()` pair so setup and publication stay rollback-covered. A detach requested during a creation dispatch waits for that dispatch to unwind, and each detach is bound to the exact entry, so a stale disposer cannot remove a later same-id replacement. Teardown order is stop-and-drain the loop, unwind the scope, detach the agent, detach the session; the id becomes reusable after private cleanup. `release(id)` runs that same teardown for one live agent through the capability its factory delegated at `enter()`, so an authoritative lifecycle owner that never held the handle — session deletion, for example — can retire an idle agent; ids that are not live, or entries `register()` created, resolve without releasing anything.
 
 ### Initiator scope
 
@@ -112,7 +112,7 @@ Each driver runs its complete lifetime inside `ctx.agents.withInitiator(agent, .
 
 ### Ownership invariants
 
-The `AgentHandle` disposer is a capability: among consumers, only its holder can tear the agent down. The registered factory provider is a structural co-owner, because scoped agents depend on that provider's service API; provider unload stops and drains every live handle it made. `ctx.agents.get(id)` still returns a bare `Agent` — the handle is exposed only to the consumer that created it.
+The `AgentHandle` disposer is a capability: among consumers, only its holder can tear the agent down. The registered factory provider is a structural co-owner, because scoped agents depend on that provider's service API; provider unload stops and drains every live handle it made. `ctx.agents.get(id)` still returns a bare `Agent` — the handle is exposed only to the consumer that created it. A factory-backed entry also carries that same disposer as its release capability, which is how `release(id)` reaches teardown without the handle.
 
 </details>
 
