@@ -16,7 +16,7 @@ Status: implemented
 
 `SessionPersistence.delete(id)` 是归档的破坏性对应操作。它是抽象服务上的默认方法，默认大声拒绝（与 `readRaw` 一致）；JSONL 与 SQLite 后端覆盖它。`PersistenceCoordinator.delete` 在会话的串行链上运行（不能与并发 append 交错），随后清理准备缓存、无属主状态与任何 retirement tail，并调用后端 `deleteStored` 钩子。JSONL 后端通过 `findLog` 定位该会话唯一日志，删除会话自有目录并同步幸存的项目目录；已创建但从未物化的会话没有产物，解析为 no-op。SQLite 后端用新增的 `delete-session.sql`（`DELETE FROM sessions WHERE id = ?`）删除 header 行，`ON DELETE CASCADE` 外键级联清理全部子事件行。
 
-`WorkspaceRegistry.deleteSession(id)` 编排注册表侧：对绑定到在运行属主的 id 拒绝（`WorkspaceSessionInUseError`，因为在运行写穿队列会重建产物）、对未知 id 拒绝（`WorkspaceUnknownSessionError`），随后把会话移出归档集合、经实体 `detachSession` 从每个 workspace 记账中摘除（使快照与 domain/changed 流保持一致），最后调用 `sessionPersistence.delete`。
+`WorkspaceRegistry.deleteSession(id)` 编排注册表侧：只对 agent loop 仍在运行的 id 拒绝（`WorkspaceSessionInUseError`，因为在途写穿会重建产物）、对未知 id 拒绝（`WorkspaceUnknownSessionError`），先把 attached 但空闲的会话 flush 一次，使其残余写穿在移除前达到持久化，随后把会话移出归档集合、经实体 `detachSession` 从每个 workspace 记账中摘除（使快照与 domain/changed 流保持一致），最后调用 `sessionPersistence.delete`。attached 本身不算「in use」，因此已归档但空闲的会话可以删除；未知会话以 `WorkspaceUnknownSessionError` 落空。参见后续的[缺陷修复记录](../bug-fix/2026-08-31-delete-archived-session-in-use-guard.zh.md)。
 
 ### 取消归档
 

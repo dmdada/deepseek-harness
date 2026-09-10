@@ -7,8 +7,10 @@ import Storage from '@deepseek-ai/dsh-storage'
 import type { StorageBackend } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import type { DomainChanged } from '@deepseek-ai/dsh-storage-domain'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionPersistenceRevision } from '@deepseek-ai/dsh-session-persistence'
+import type { SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import WorkspaceRegistry, {
   WorkspaceId,
@@ -18,13 +20,15 @@ import WorkspaceRegistry, {
   WorkspaceUnknownSessionError,
 } from '../src/index.ts'
 import type { WorkspaceDomainState, WorkspaceRecord } from '../src/index.ts'
+import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath } from '../src/paths.ts'
 
 const DOMAIN_VERSION = 2
 
 const header = (id: string, cwd?: string, createdAt = 0): SessionHeader => ({
-  version: 0,
+  version: SESSION_FORMAT_VERSION,
   id: SessionId(id),
   createdAt,
+  isSeeded: false,
   ...(cwd === undefined ? {} : { cwd }),
 })
 
@@ -49,11 +53,12 @@ async function harness(options: HarnessOptions = {}) {
   ctx.provide('storageDomain', facility)
 
   let listed = options.sessions ?? []
-  const list = vi.fn(async () => listed)
-  const load = vi.fn(() => { throw new Error('event bodies must not be loaded') })
-  const inspect = vi.fn(() => { throw new Error('event bodies must not be inspected') })
+  const list = vi.fn(async (): Promise<SessionPersistenceSnapshot[]> =>
+    listed.map(header => ({ header, revision: SessionPersistenceRevision(`rev-${header.id}`) })))
+  const open = vi.fn(() => { throw new Error('event bodies must not be opened') })
+  const stat = vi.fn(() => { throw new Error('per-session stat must not be needed') })
   const del = vi.fn(async () => undefined)
-  ctx.provide('sessionPersistence', { list, load, inspect, delete: del } as never)
+  ctx.provide('sessionPersistence', { list, open, stat, delete: del } as never)
 
   if (options.sessionStore === true) {
     await ctx.plugin(SessionStore)
@@ -85,8 +90,8 @@ async function harness(options: HarnessOptions = {}) {
     changes,
     initChanges,
     list,
-    load,
-    inspect,
+    open,
+    stat,
     del,
     setSessions: (headers: SessionHeader[]) => { listed = headers },
   }
@@ -204,7 +209,7 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     expect(ctx.get('workspaceRegistry')).toBeUndefined()
     expect(pool.media.has('workspace')).toBe(false)
 
-    const list = vi.fn(async () => [] as SessionHeader[])
+    const list = vi.fn(async () => [] as SessionPersistenceSnapshot[])
     ctx.provide('sessionPersistence', { list } as never)
     await fiber.await()
     expect(ctx.workspaceRegistry.list()).toEqual([])
@@ -232,8 +237,8 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     })
 
     expect(result.list).toHaveBeenCalledTimes(1)
-    expect(result.load).not.toHaveBeenCalled()
-    expect(result.inspect).not.toHaveBeenCalled()
+    expect(result.open).not.toHaveBeenCalled()
+    expect(result.stat).not.toHaveBeenCalled()
     expect(result.registry.list().map(workspace => workspace.path)).toEqual([newer, older])
     expect(result.registry.list().map(workspace => workspace.sessionIds)).toEqual([
       ['newer-only'],
@@ -365,6 +370,24 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
 })
 
 describe('WorkspaceRegistry create and lookup', () => {
+  it('accepts fully qualified roots and directories without accepting drive-relative paths', () => {
+    expect(fullyQualifiedWorkspacePath('C:\\', 'win32')).toBe(true)
+    expect(fullyQualifiedWorkspacePath('C:\\work', 'win32')).toBe(true)
+    expect(fullyQualifiedWorkspacePath('\\\\server\\share', 'win32')).toBe(true)
+    expect(defaultWorkspaceTitle('C:\\', 'win32')).toBe('C:\\')
+    expect(defaultWorkspaceTitle('C:\\work', 'win32')).toBe('work')
+    expect(defaultWorkspaceTitle('\\\\server\\share', 'win32')).toBe('share')
+    expect(fullyQualifiedWorkspacePath('C:', 'win32')).toBe(false)
+    expect(fullyQualifiedWorkspacePath('C:work', 'win32')).toBe(false)
+    expect(fullyQualifiedWorkspacePath('\\work', 'win32')).toBe(false)
+    expect(fullyQualifiedWorkspacePath('.', 'win32')).toBe(false)
+    expect(fullyQualifiedWorkspacePath('/', 'linux')).toBe(true)
+    expect(fullyQualifiedWorkspacePath('/work', 'darwin')).toBe(true)
+    expect(defaultWorkspaceTitle('/', 'linux')).toBe('/')
+    expect(defaultWorkspaceTitle('/work', 'darwin')).toBe('work')
+    expect(fullyQualifiedWorkspacePath('work', 'linux')).toBe(false)
+  })
+
   it('creates newest-first and idempotently reuses a canonical path without retitling', async () => {
     const firstDir = await makeDir('first')
     const secondDir = await makeDir('second')
@@ -413,6 +436,14 @@ describe('WorkspaceRegistry create and lookup', () => {
     await expect(registry.create(join(parent, 'missing'))).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(registry.create(file)).rejects.toThrow(/not a directory/)
     await expect(registry.resolveByPath(join(parent, 'missing'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(registry.list()).toEqual([])
+  })
+
+  it('rejects a resolvable relative path instead of adopting it from the Host cwd', async () => {
+    const { registry } = await harness()
+    const fromHostCwd = '.'
+    await expect(registry.create(fromHostCwd)).rejects.toThrow(/fully qualified/)
+    await expect(registry.resolveByPath(fromHostCwd)).rejects.toThrow(/fully qualified/)
     expect(registry.list()).toEqual([])
   })
 
@@ -503,8 +534,8 @@ describe('WorkspaceRegistry create and lookup', () => {
     expect(result.pool.media.get('workspace')!.tables.get('workspaces')!.has(workspace.id)).toBe(false)
     await expect(realpath(dir)).resolves.toBe(dir)
     expect(result.list).toHaveBeenCalledTimes(1)
-    expect(result.load).not.toHaveBeenCalled()
-    expect(result.inspect).not.toHaveBeenCalled()
+    expect(result.open).not.toHaveBeenCalled()
+    expect(result.stat).not.toHaveBeenCalled()
 
     const reregistered = await result.registry.create(dir)
     expect(reregistered.id).not.toBe(workspace.id)
@@ -954,28 +985,23 @@ describe('registry-global session archive', () => {
     const upgraded = await harness({ pool: legacy })
     expect(upgraded.registry.archivedSessionIds).toEqual([])
   })
-})
 
-describe('registry-global session unarchive and delete', () => {
   it('unarchiveSession removes a session from the archive set and is idempotent for a non-archived id', async () => {
     const dir = await makeDir('unarchive-home')
-    const result = await harness({ sessions: [header('s1', dir)] })
-    const workspace = result.registry.list()[0]!
-    await workspace.attachSession(SessionId('s1'))
+    const result = await harness({ sessions: [header('s1', dir, 100)] })
     await result.registry.archiveSession(SessionId('s1'))
     expect(result.registry.archivedSessionIds).toEqual(['s1'])
+    const globalWrites = result.changes.filter(change => change.table === '').length
 
     await result.registry.unarchiveSession(SessionId('s1'))
     expect(result.registry.archivedSessionIds).toEqual([])
     expect(storedState(result.pool).archivedSessionIds).toEqual([])
-    // Unarchive leaves the workspace accounting slot and the log untouched.
-    expect(workspace.sessionIds).toEqual(['s1'])
+    expect(result.changes.filter(change => change.table === '').length).toBe(globalWrites + 1)
 
-    // Idempotent for a non-archived id: no write, no change event.
-    const globalWrites = result.changes.filter(change => change.table === '').length
+    // A repeat of a not-archived id resolves without writing.
     await result.registry.unarchiveSession(SessionId('s1'))
     expect(result.registry.archivedSessionIds).toEqual([])
-    expect(result.changes.filter(change => change.table === '').length).toBe(globalWrites)
+    expect(result.changes.filter(change => change.table === '').length).toBe(globalWrites + 1)
   })
 
   it('deleteSession removes the archive entry, every workspace account, and persists the delete', async () => {
@@ -1015,19 +1041,6 @@ describe('registry-global session unarchive and delete', () => {
     expect(result.del).toHaveBeenCalledWith(SessionId('s1'))
   })
 
-  it('deleteSession rejects a session whose agent loop is running', async () => {
-    const live = await makeDir('live-in-use')
-    const result = await harness({
-      liveSessions: [header('live', live, 100)],
-      runningSessions: [SessionId('live')],
-    })
-    await expect(result.registry.deleteSession(SessionId('live')))
-      .rejects.toBeInstanceOf(WorkspaceSessionInUseError)
-    await expect(result.registry.deleteSession(SessionId('live')))
-      .rejects.toMatchObject({ sessionId: SessionId('live') })
-    expect(result.del).not.toHaveBeenCalled()
-  })
-
   it('deleteSession deletes an archived session still attached (idle) to the live store', async () => {
     const dir = await makeDir('delete-idle-archived')
     const result = await harness({ liveSessions: [header('s1', dir, 100)] })
@@ -1040,6 +1053,19 @@ describe('registry-global session unarchive and delete', () => {
     // flush drain runs before the artifact is removed.
     expect(result.registry.archivedSessionIds).not.toContain('s1')
     expect(result.del).toHaveBeenCalledWith(SessionId('s1'))
+  })
+
+  it('deleteSession rejects a session whose agent loop is running', async () => {
+    const live = await makeDir('live-in-use')
+    const result = await harness({
+      liveSessions: [header('live', live, 100)],
+      runningSessions: [SessionId('live')],
+    })
+    await expect(result.registry.deleteSession(SessionId('live')))
+      .rejects.toBeInstanceOf(WorkspaceSessionInUseError)
+    await expect(result.registry.deleteSession(SessionId('live')))
+      .rejects.toMatchObject({ sessionId: SessionId('live') })
+    expect(result.del).not.toHaveBeenCalled()
   })
 
   it('deleteSession rejects an unknown session', async () => {

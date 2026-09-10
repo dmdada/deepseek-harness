@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-10-delete-and-unarchive-archived-sessions.md
-2026-08-10-delete-and-unarchive-archived-sessions.md: 193cd0349b5b91fe77ef86b426c0bdc79c77e228
-2026-08-10-delete-and-unarchive-archived-sessions.zh.md: 93a06657c144ddb291037b86c37dd4dc7b5fc9e2
+2026-08-10-delete-and-unarchive-archived-sessions.md: f48be78413475e53f3ad781e6482b9e809b380a6
+2026-08-10-delete-and-unarchive-archived-sessions.zh.md: b594372a275323ebf2ba6aed089d4c6a05e2576a

@@ -36,10 +36,10 @@ export const en: Record<AgentPresetSettingsKey, string> = {
     'Full coding agent with file editing, shell, file and web search, skills, planning, goals, subagents, and workflows.',
   presetPtcName: 'PTC mode',
   presetPtcDescription:
-    'All Standard mode capabilities, with tools exposed through the PTC mode SDK so the model can combine multi-step operations in one TypeScript program.',
+    'Full coding agent without the workflow tool; other tools are exposed through the PTC mode SDK so the model can combine multi-step operations in one TypeScript program.',
   presetMinimalName: 'Minimal mode',
   presetMinimalDescription:
-    'Two-tool coding agent with persistent bash and str_replace_editor.',
+    'Single-tool coding agent with a persistent shell.',
   presetCordisName: 'Creator mode',
   presetCordisDescription:
     'Built for creating custom agent presets, with all Standard mode capabilities plus runtime inspection, plugin experiments, and preset-authoring guidance.',
@@ -96,9 +96,9 @@ export const zh: Record<AgentPresetSettingsKey, string> = {
   presetStandardName: '标准模式',
   presetStandardDescription: '功能完整的编码 Agent，支持文件编辑、Shell、文件与网页检索、Skills、计划、目标、子代理和工作流。',
   presetPtcName: 'PTC 模式',
-  presetPtcDescription: '具备标准模式的全部能力，并通过 PTC 模式 SDK 呈现工具，让模型用一个 TypeScript 程序组合多步操作。',
+  presetPtcDescription: '功能完整的编码 Agent，但默认不提供 workflow 工具；其他工具通过 PTC 模式 SDK 呈现，让模型用一个 TypeScript 程序组合多步操作。',
   presetMinimalName: '极简模式',
-  presetMinimalDescription: '仅提供持久 bash 与 str_replace_editor 的双工具编码 Agent。',
+  presetMinimalDescription: '仅提供持久 shell 的单工具编码 Agent。',
   presetCordisName: '创造模式',
   presetCordisDescription: '用于创建自定义 Agent preset：具备标准模式的全部能力，并提供运行时检查、插件实验和 preset 创作指导。',
   duplicate: '复制',
