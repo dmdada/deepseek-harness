@@ -8,7 +8,7 @@ Status: implemented
 
 `WorkspaceRegistry.deleteSession` 会拒绝任何仍 attached 在 live sessions 存储上的会话，而不只是循环仍在途的那一个：
 
-```ts
+```ts ignore-check
 if (this.ctx.get('sessions')?.get(sessionId) !== undefined) {
   throw new WorkspaceSessionInUseError(sessionId)
 }

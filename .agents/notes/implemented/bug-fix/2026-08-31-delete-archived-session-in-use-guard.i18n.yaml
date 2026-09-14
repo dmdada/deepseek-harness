@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-31-delete-archived-session-in-use-guard.md
-2026-08-31-delete-archived-session-in-use-guard.md: a18f883924119d8ed20e5104d4e260dad06763df
-2026-08-31-delete-archived-session-in-use-guard.zh.md: 282e5b7a6921b3f1a374c28c3ac9fa59bb897ac5
+2026-08-31-delete-archived-session-in-use-guard.md: a9d5d74e43cacb81ae3ed6ae666715a69ed83dc3
+2026-08-31-delete-archived-session-in-use-guard.zh.md: eeb210ebea4e7fe6840fad495247c77a825cc937

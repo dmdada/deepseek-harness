@@ -8,7 +8,7 @@ English | [中文](2026-08-31-delete-archived-session-in-use-guard.zh.md)
 
 `WorkspaceRegistry.deleteSession` rejected any session still attached to the live sessions store, not just one whose loop was in flight:
 
-```ts
+```ts ignore-check
 if (this.ctx.get('sessions')?.get(sessionId) !== undefined) {
   throw new WorkspaceSessionInUseError(sessionId)
 }
